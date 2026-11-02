@@ -242,15 +242,15 @@ The original decision for `c_47dbce47d028` stays in the log unchanged, and the a
 
 **Moment 1**
 
-- *What I asked for:*
-- *What came back:*
-- *What I changed:*
+- *What I asked for:* I missed attending this week's class, and I just went through a layoff, so I couldn't read, understand and makesense of the assignment. I asked AI to explain me what this project it about and what I should do.
+- *What came back:* It gave me clear explanation of the project and laid out step by step guide of what I should do.
+- *What I changed:* I followed it
 
 **Moment 2**
 
-- *What I asked for:*
-- *What came back:*
-- *What I changed:*
+- *What I asked for:* I asked it to build the second signal and the combining rule, and then to write the results into the readme.
+- *What came back:* Working code and a calibration run that changed the picture of the signals. Type-token ratio pointed the opposite way from what the brief predicted, so it was given zero weight. The combining rule caps the score inside 'unsure' whenever the two signals disagree.
+- *What I changed:* I kept the code as it was. 
 
 <!-- ═══════════════════════ UNIT 8 — THE TEST ═══════════════════════ -->
 
