@@ -121,14 +121,20 @@ The `clearly_human` sample (a first-person paragraph about a sleepless night). T
 
 | Label | Score range | The exact text a reader sees |
 |---|---|---|
-| high-confidence human |  |  |
-| unsure |  |  |
-| high-confidence AI |  |  |
+| high-confidence human | 0.00 – 0.35 | This reads like it was written by a person. |
+| unsure | 0.35 – 0.65 | We can't tell from the writing alone whether this was written by a person or with help from AI. That happens often, especially with short or plainly written pieces, and it isn't a judgement about the writer. |
+| high-confidence AI | 0.65 – 1.00 | Our checks suggest this was probably written with AI. Automated checks can be wrong, and they are wrong more often about plain, simple writing. If you wrote this yourself, you can ask for a person to review it. |
+
+The bands meet exactly (`<= 0.35` is human, `>= 0.65` is AI, everything between is unsure), so there's no gap. All three were reached with the `samples/` files: clearly_human → 0.23, borderline → 0.44, clearly_ai → 0.79.
 
 **Why I worded the "unsure" one this way:**
 <!-- It's the hardest of the three. It has to admit uncertainty without
      sounding like an accusation, because the person reading it may well have
      written every word themselves. -->
+
+It puts the limit on the tool ("we can't tell from the writing alone"), not on the writer. It says this is common, so a writer who gets it doesn't read it as being singled out. And it says outright that it isn't a judgement, because the person most likely to see it is a real writer whose plain style confused both signals.
+
+The AI label is the one that can actually hurt someone, so it says "probably", admits the check can be wrong, names the kind of writing it gets wrong most (my own calibration showed plain human writing scoring above real AI text), and points straight to the appeal.
 
 
 
@@ -149,11 +155,19 @@ The `clearly_human` sample (a first-person paragraph about a sleepless night). T
 ```bash
 $ curl -X POST http://127.0.0.1:5000/submit \
   -H "Content-Type: application/json" \
-  -d '{"text": "...", "creator_id": "..."}'
+  -d @samples/clearly_ai.json
 ```
 
 ```json
-
+{
+  "confidence": 0.7925,
+  "content_id": "c_47dbce47d028",
+  "creator_id": "demo_instructor",
+  "guess": "ai",
+  "label": "Our checks suggest this was probably written with AI. Automated checks can be wrong, and they are wrong more often about plain, simple writing. If you wrote this yourself, you can ask for a person to review it.",
+  "model_score": 0.7544,
+  "style_score": 0.8307
+}
 ```
 
 **An appeal**
@@ -161,12 +175,19 @@ $ curl -X POST http://127.0.0.1:5000/submit \
 ```bash
 $ curl -X POST http://127.0.0.1:5000/appeal \
   -H "Content-Type: application/json" \
-  -d '{"content_id": "...", "reasoning": "..."}'
+  -d '{"content_id": "c_47dbce47d028", "reasoning": "I wrote this myself for a workplace newsletter. I write formally because English is my second language."}'
 ```
 
 ```json
-
+{
+  "content_id": "c_47dbce47d028",
+  "message": "Thanks. Your appeal has been recorded and this piece is now waiting for a person to review it.",
+  "original_guess": "ai",
+  "status": "under_review"
+}
 ```
+
+An unknown id returns `404 {"error": "not_found", ...}` and a missing `reasoning` returns `400 {"error": "bad_request", ...}` — neither writes to the log.
 
 **What the log shows afterwards**
 
@@ -175,8 +196,44 @@ $ curl "http://127.0.0.1:5000/log?limit=3"
 ```
 
 ```json
-
+{
+  "count": 3,
+  "entries": [
+    {
+      "combined_score": 0.4401,
+      "content_id": "c_6b16505e2252",
+      "creator_id": "demo_instructor",
+      "guess": "unsure",
+      "label": "We can't tell from the writing alone whether this was written by a person or with help from AI. That happens often, especially with short or plainly written pieces, and it isn't a judgement about the writer.",
+      "model_score": 0.3489,
+      "status": "decided",
+      "style_score": 0.5314,
+      "timestamp": "2026-11-02T11:44:00+00:00"
+    },
+    {
+      "combined_score": 0.7925,
+      "content_id": "c_47dbce47d028",
+      "creator_id": "demo_instructor",
+      "guess": "ai",
+      "label": "Our checks suggest this was probably written with AI. Automated checks can be wrong, and they are wrong more often about plain, simple writing. If you wrote this yourself, you can ask for a person to review it.",
+      "model_score": 0.7544,
+      "status": "decided",
+      "style_score": 0.8307,
+      "timestamp": "2026-11-02T11:44:00+00:00"
+    },
+    {
+      "content_id": "c_47dbce47d028",
+      "creator_id": "demo_instructor",
+      "event": "appeal",
+      "reasoning": "I wrote this myself for a workplace newsletter. I write formally because English is my second language.",
+      "status": "under_review",
+      "timestamp": "2026-11-02T11:44:04+00:00"
+    }
+  ]
+}
 ```
+
+The original decision for `c_47dbce47d028` stays in the log unchanged, and the appeal sits after it with status `under_review`.
 
 ---
 
