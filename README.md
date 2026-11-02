@@ -39,13 +39,13 @@
 <!-- The path a submission takes, from arriving to the label a reader sees.
      Six or seven steps — this is the trace you wrote in Milestone 1. -->
 
-1. **`POST /submit`** (`app.py`) receives `{text, creator_id}`. It adds the input check: a body that isn't a JSON object, or a missing, empty or non-string `text`, gets a 400 before any model runs, and text over 20,000 characters gets a 413 rather than being silently cut down to the detector's 400 tokens.
-2. **`detector.model_signal`** adds `model_score`, 0–1, from how predictable GPT-2 finds the text. Text under 3 tokens is turned away here with a 400 `text_too_short`.
-3. **`stylometry.style_signal`** adds `style_score`, 0–1, from the shape of the text: how much sentence length varies and how much punctuation it uses.
-4. **`scoring.combine_signals`** adds one combined score: an equal-weight average, capped inside the unsure band whenever either signal leans human. It's returned as `confidence`.
-5. **`scoring.score_to_label`** adds `guess` (`human` / `unsure` / `ai`) and the full sentence a reader sees.
-6. **`app.py`** gives the submission a `content_id`, and **`audit.log_decision`** writes a permanent record — both signal scores, the combined score, the guess, the label, status `decided` — to `logs/audit.jsonl`.
-7. The **response** goes back to the site and the reader sees the label. If the writer disagrees, **`POST /appeal`** with that `content_id` appends an appeal to the log next to the original decision and moves the item to `under_review`.
+1. POST /submit (app.py) receives {text, creator_id}. It adds input checks: missing, empty or very long text gets rejected here.
+2. detector.model_signal adds model_score, a 0–1 number from GPT‑2 perplexity.
+3. stylometry.style_signal adds style_score, a 0–1 number from the shape of the text.
+4. scoring.combine_signals adds one combined score.
+5. scoring.score_to_label adds guess (ai/human/unsure) and the sentence a person reads.
+6. audit.log_decision adds a content_id and a permanent record with status decided.
+7. The response goes back to the site, and the reader sees the label. If the writer disagrees, /appeal moves the status to under_review.
 
 ---
 
@@ -67,11 +67,11 @@
 
 ### Signal two — the style signal
 
-**What it measures:** The shape of the text, without reading it. Two measures count: how much sentence length varies (standard deviation ÷ mean of words per sentence) and punctuation density (commas, `; : — ( ) " ! ?` per word, full stops not counted). Each is mapped onto 0–1 AI-ness with a straight line between a human-looking and an AI-looking value, then the two are averaged. A third measure, type-token ratio (unique ÷ total words, averaged over 50-word windows), is computed but given zero weight — on my calibration inputs it pointed the wrong way: the AI text had the *most* varied vocabulary (0.92–0.96) and the plain human text the least (0.71).
+**What it measures:** The shape of the text, without reading it. Two measures count: how much sentence length varies (standard deviation ÷ mean of words per sentence) and punctuation density (commas, `; : — ( ) " ! ?` per word, full stops not counted). Each is mapped onto 0–1 AI-ness with a straight line between a human-looking and an AI-looking value, then the two are averaged. A third measure, type-token ratio (unique ÷ total words, averaged over 50-word windows), is computed but given zero weight — on my calibration inputs it pointed the wrong way: the clearly-AI sample had more varied vocabulary (0.91) than any of the longer human texts, and my own plain paragraph had the least (0.71).
 
 **Why that might differ between human and AI writing:** AI writes even, mid-length sentences with tidy, sparse punctuation. Humans are lumpier — a two-word sentence next to a forty-word one, asides in dashes, a colon where a list starts.
 
-**What it can't see:** Meaning. Typos, chopped-up sentences or a pasted quotation change the score without changing who wrote it. And it shares signal one's blind spot: plain writing — short, even sentences with few commas — looks *more* machine-like to it than real AI text does (my plain human paragraph scored 0.99, the clearly-AI sample 0.83).
+**What it can't see:** Meaning. Typos, chopped-up sentences or a pasted quotation change the score without changing who wrote it. And it shares signal one's blind spot: plain writing — short sentences with few commas — leans machine-like to it (my own plain paragraph scored 0.59).
 
 ### The combining rule
 
@@ -95,18 +95,19 @@
 
 The `clearly_human` sample (a first-person paragraph about a sleepless night). The model signal gave it **0.45** — near the middle, because ordinary words in a personal story are fairly predictable to GPT-2. The style signal gave it **0.02**, strongly human: sentence lengths swing from two words to forty, and it is full of dashes, colons and commas. The average is **0.23**, which lands in high-confidence human. The cap doesn't fire because the combined score is already low — it only matters when a split would otherwise push a text toward AI.
 
-**Calibration run** (both signals printed separately). The first three rows are the files in `samples/`. The formal-human, plain-human and lightly-edited-AI rows are stand-in texts written with AI help, not by a person — to be replaced with my own writing and rerun:
+**Calibration run** (both signals printed separately). All six are files in `samples/`. `formal_human.json` and `plain_human.json` are my own writing, and `edited_ai.json` is chatbot text I edited lightly:
 
 | Input | model | style | combined |
 |---|---|---|---|
 | clearly AI | 0.75 | 0.83 | 0.79 |
 | clearly human | 0.45 | 0.02 | 0.23 |
 | borderline | 0.35 | 0.53 | 0.44 |
-| formal human | 0.53 | 0.66 | 0.60 |
-| plain human | 0.85 | 0.99 | 0.92 |
-| lightly-edited AI | 0.65 | 0.69 | 0.67 |
+| formal human | 0.27 | 0.63 | 0.45 |
+| plain human | 0.62 | 0.59 | 0.60 |
+| lightly-edited AI | 0.59 | 0.59 | 0.59 |
 
-**What the rule can't fix:** the plain human paragraph scores 0.92 — higher than the real AI text. Both signals share the same blind spot, so they *agree*, and agreement is exactly when the rule lets an AI label through. No threshold separates it from clearly-AI text either, since it scores above it. This is the false-positive writer from Milestone 1, and with the current signals my criterion 1 would fail on plain writing.
+The formal human text is a post I wrote, with technical vocabulary (MCP servers, micro-services, gratuity) that GPT-2 finds surprising, so the model signal reads it as human (0.27). The style signal leans the other way (0.63) because its bullet points are even, mid-length lines. The disagreement puts it in unsure. The lightly-edited AI also lands in unsure: a miss, but the cheap kind.
+**What the rule can't fix:** my own plain paragraph — short sentences, everyday words, written by me — scores 0.60. It lands in unsure, but only 0.05 below the AI line (0.65). Both signals lean AI on it (model 0.62, style 0.59), so they *agree*, and agreement is exactly when the disagreement cap doesn't apply. A slightly plainer paragraph would cross the line and get the AI label. This is the false-positive writer from Milestone 1, and it's the case my criterion 1 is most likely to fail on.
 
 
 
@@ -134,7 +135,7 @@ The bands meet exactly (`<= 0.35` is human, `>= 0.65` is AI, everything between 
 
 It puts the limit on the tool ("we can't tell from the writing alone"), not on the writer. It says this is common, so a writer who gets it doesn't read it as being singled out. And it says outright that it isn't a judgement, because the person most likely to see it is a real writer whose plain style confused both signals.
 
-The AI label is the one that can actually hurt someone, so it says "probably", admits the check can be wrong, names the kind of writing it gets wrong most (my own calibration showed plain human writing scoring above real AI text), and points straight to the appeal.
+The AI label is the one that can actually hurt someone, so it says "probably", admits the check can be wrong, names the kind of writing it gets wrong most (my own plain paragraph came within 0.05 of the AI line), and points straight to the appeal.
 
 
 
@@ -241,15 +242,15 @@ The original decision for `c_47dbce47d028` stays in the log unchanged, and the a
 
 **Moment 1**
 
-- *What I asked for:* I missed attending this week's class, and I just went through a layoff, so I couldn't read, understand and makesense of the assignment. I asked AI to explain me what this project it about and what I should do.
-- *What came back:* It gave me clear explanation of the project and laid out step by step guide of what I should do.
-- *What I changed:* I followed it
+- *What I asked for:*
+- *What came back:*
+- *What I changed:*
 
 **Moment 2**
 
-- *What I asked for:* I asked it to build the second signal and the combining rule, and then to write the results into the readme.
-- *What came back:* Working code and a calibration run that changed the picture of the signals. Type-token ratio pointed the opposite way from what the brief predicted, so it was given zero weight. The combining rule caps the score inside 'unsure' whenever the two signals disagree. The run also showed that a plain, simply written human paragraph scored 0.92, above the real AI sample, because both signals share the same blind spot.
-- *What I changed:* I kept the code as it was. 
+- *What I asked for:*
+- *What came back:*
+- *What I changed:*
 
 <!-- ═══════════════════════ UNIT 8 — THE TEST ═══════════════════════ -->
 
