@@ -39,7 +39,13 @@
 <!-- The path a submission takes, from arriving to the label a reader sees.
      Six or seven steps — this is the trace you wrote in Milestone 1. -->
 
-
+1. POST /submit (app.py) receives {text, creator_id}. It adds input checks: missing, empty or very long text gets rejected here.
+2. detector.model_signal adds model_score, a 0–1 number from GPT‑2 perplexity.
+3. stylometry.style_signal adds style_score, a 0–1 number from the shape of the text.
+4. scoring.combine_signals adds one combined score.
+5. scoring.score_to_label adds guess (ai/human/unsure) and the sentence a person reads.
+6. audit.log_decision adds a content_id and a permanent record with status decided.
+7. The response goes back to the site, and the reader sees the label. If the writer disagrees, /appeal moves the status to under_review.
 
 ---
 
@@ -53,19 +59,19 @@
 
 ### Signal one — the model signal
 
-**What it measures:**
+**What it measures:** Predictability
 
-**Why that might differ between human and AI writing:**
+**Why that might differ between human and AI writing:** Models pick likely next words, so their text is easy to predict
 
-**What it can't see:**
+**What it can't see:** Plain writing by people who write simply like second-language writers, young writers. IT also misses ornate AI text full of rare words.
 
 ### Signal two — the style signal
 
-**What it measures:**
+**What it measures:** Shape - sentence length spread, vocabulary variety, punctuation
 
-**Why that might differ between human and AI writing:**
+**Why that might differ between human and AI writing:** AI writes even, mid length sentences with a narrower vocabulary. Humans are lumpier
 
-**What it can't see:**
+**What it can't see:** Meaning. Typos, chopped-up sentences or a pasted quotation change the score without changing who wrote it
 
 ### The combining rule
 

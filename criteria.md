@@ -42,61 +42,39 @@ Two things worth knowing before you pick numbers:
   a **miss**.
 
 ---
-## 1.
+## 1. False positives
 
-<!-- Your criterion. It must name a number. -->
+Of 10 pieces I wrote myself, atleast 3 of them deliberately plain (short sentences, common words), none gets the high-confidence AI label in any of the three trials.
 
-
-
-**Why this target:**
-
-
+**Why this target:** A wrong accusation costs a real writer far more than a missed AI text costs the site. The plain pieces are there because that's the writer the model signal is most likely to accuse.
 
 ---
 
-## 2.
+## 2. Score spread
+Across 5 texts I'm confident are AI and 5 I'm confident are human, the average combined score of the AI set is atleast 0.30 higher than the human set's.
 
-<!-- Your criterion. -->
-
-
-
-**Why this target:**
-
-
+**Why this target:** If the gap is smaller than the unsure band, the clear cases can't land in different labels, and the system is effectively always unsure.
 
 ---
 
-## 3.
+## 3. Label coverage
+Using a set of 6 inputs (2 clearly AI, 2 clearly human, 2 borderline), each of the three labels (human, ai, unsure) shows up atleast once in every trial.
 
-<!-- Your criterion. -->
-
-
-
-**Why this target:**
-
-
+**Why this target:** A label no score can reach is a gap in the ranges. "unsure" matters most because it's the safe answer for the false-positive writer.
 
 ---
 
-## 4.
+## 4. The appeal path
+For 5 submissions I appeal, 5 of 5 return succes, and /log shows an appeal entry with my reasoning and status under_review. An appeal with a made-up content_id returns 404 and changes nothing in the log.
 
-<!-- Your criterion. -->
-
-
-
-**Why this target:**
-
-
+**Why this target:** The appeal is the only thing between a wrong label and the writer having no recourse. If it fails silently even once, that writer is stuck.
 
 ---
 
-## 5.
+## 5. Bad input
+The malformed requests (empty text, missing text, text: null) each get a 4xx response with an error field. None returns a 500, and /ping still answers afterward.
 
-<!-- Your criterion. -->
-
-
-
-**Why this target:**
+**Why this target:** A crash on bad input is one of the most common real failures.
 
 
 
