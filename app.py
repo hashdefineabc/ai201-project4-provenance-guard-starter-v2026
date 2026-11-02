@@ -209,6 +209,11 @@ def submit():
 
     if not isinstance(text, str) or not text.strip():
         return jsonify({"error": "bad_request", "message":"Send Json with a non-empty \"text\""}), 400
+    if len(text) > config.MAX_TEXT_CHARS:
+        return jsonify({
+            "error": "text_too_long",
+            "message": f"Text is {len(text):,} characters; the limit is {config.MAX_TEXT_CHARS:,}.",
+        }), 413
 
     # step 3: one real signal that we first tested from the terminal
     try:

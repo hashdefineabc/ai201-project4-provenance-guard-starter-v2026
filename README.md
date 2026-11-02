@@ -39,13 +39,13 @@
 <!-- The path a submission takes, from arriving to the label a reader sees.
      Six or seven steps — this is the trace you wrote in Milestone 1. -->
 
-1. POST /submit (app.py) receives {text, creator_id}. It adds input checks: missing, empty or very long text gets rejected here.
-2. detector.model_signal adds model_score, a 0–1 number from GPT‑2 perplexity.
-3. stylometry.style_signal adds style_score, a 0–1 number from the shape of the text.
-4. scoring.combine_signals adds one combined score.
-5. scoring.score_to_label adds guess (ai/human/unsure) and the sentence a person reads.
-6. audit.log_decision adds a content_id and a permanent record with status decided.
-7. The response goes back to the site, and the reader sees the label. If the writer disagrees, /appeal moves the status to under_review.
+1. **`POST /submit`** (`app.py`) receives `{text, creator_id}`. It adds the input check: a body that isn't a JSON object, or a missing, empty or non-string `text`, gets a 400 before any model runs, and text over 20,000 characters gets a 413 rather than being silently cut down to the detector's 400 tokens.
+2. **`detector.model_signal`** adds `model_score`, 0–1, from how predictable GPT-2 finds the text. Text under 3 tokens is turned away here with a 400 `text_too_short`.
+3. **`stylometry.style_signal`** adds `style_score`, 0–1, from the shape of the text: how much sentence length varies and how much punctuation it uses.
+4. **`scoring.combine_signals`** adds one combined score: an equal-weight average, capped inside the unsure band whenever either signal leans human. It's returned as `confidence`.
+5. **`scoring.score_to_label`** adds `guess` (`human` / `unsure` / `ai`) and the full sentence a reader sees.
+6. **`app.py`** gives the submission a `content_id`, and **`audit.log_decision`** writes a permanent record — both signal scores, the combined score, the guess, the label, status `decided` — to `logs/audit.jsonl`.
+7. The **response** goes back to the site and the reader sees the label. If the writer disagrees, **`POST /appeal`** with that `content_id` appends an appeal to the log next to the original decision and moves the item to `under_review`.
 
 ---
 
@@ -241,15 +241,15 @@ The original decision for `c_47dbce47d028` stays in the log unchanged, and the a
 
 **Moment 1**
 
-- *What I asked for:*
-- *What came back:*
-- *What I changed:*
+- *What I asked for:* I missed attending this week's class, and I just went through a layoff, so I couldn't read, understand and makesense of the assignment. I asked AI to explain me what this project it about and what I should do.
+- *What came back:* It gave me clear explanation of the project and laid out step by step guide of what I should do.
+- *What I changed:* I followed it
 
 **Moment 2**
 
-- *What I asked for:*
-- *What came back:*
-- *What I changed:*
+- *What I asked for:* I asked it to build the second signal and the combining rule, and then to write the results into the readme.
+- *What came back:* Working code and a calibration run that changed the picture of the signals. Type-token ratio pointed the opposite way from what the brief predicted, so it was given zero weight. The combining rule caps the score inside 'unsure' whenever the two signals disagree. The run also showed that a plain, simply written human paragraph scored 0.92, above the real AI sample, because both signals share the same blind spot.
+- *What I changed:* I kept the code as it was. 
 
 <!-- ═══════════════════════ UNIT 8 — THE TEST ═══════════════════════ -->
 
