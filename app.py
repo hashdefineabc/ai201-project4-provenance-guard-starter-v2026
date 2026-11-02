@@ -208,25 +208,34 @@ def submit():
     if not isinstance(text, str) or not text.strip():
         return jsonify({"error": "bad_request", "message":"Send Json with a non-empty \"text\""}), 400
 
-    # step 3: one real signal that we first tested from the terminal 
-    model_score = detector.model_signal(text)
+    # step 3: one real signal that we first tested from the terminal
+    try:
+        model_score = detector.model_signal(text)
+    except ValueError as exc:
+        # The detector refuses text under 3 tokens — that's bad input, not a crash.
+        return jsonify({"error": "text_too_short", "message": str(exc)}), 400
+
+    # Placeholders until Milestones 4 and 5.
+    guess = "unsure"
+    label = "not built yet"
 
     # Step 4 - log the decision. The content_id is what /appeal needs later.
     content_id = f"c_{uuid.uuid4().hex[:12]}"
     audit.log_decision(
         content_id=content_id,
         creator_id=creator_id,
+        guess=guess,
         model_score=model_score,
+        label=label,
         status="decided",
     )
 
-    # Step 1 - to get the route working without any logic
     return jsonify({
-        "content_id": "hardcoded",
+        "content_id": content_id,
         "creator_id": creator_id,
-        "guess": "unsure",
+        "guess": guess,
         "confidence": model_score,
-        "label": "not built yet",
+        "label": label,
         "model_score": model_score,
         "style_score": None,
     }), 200
