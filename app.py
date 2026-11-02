@@ -31,6 +31,8 @@ from flask import Flask, jsonify, request
 import audit
 import config
 import detector
+import scoring
+import stylometry
 
 app = Flask(__name__)
 
@@ -215,7 +217,11 @@ def submit():
         # The detector refuses text under 3 tokens — that's bad input, not a crash.
         return jsonify({"error": "text_too_short", "message": str(exc)}), 400
 
-    # Placeholders until Milestones 4 and 5.
+    # Milestone 4 - the second signal, and the rule that combines them.
+    style_score = stylometry.style_signal(text)
+    combined_score = scoring.combine_signals(model_score, style_score)
+
+    # Placeholders until Milestone 5.
     guess = "unsure"
     label = "not built yet"
 
@@ -226,6 +232,8 @@ def submit():
         creator_id=creator_id,
         guess=guess,
         model_score=model_score,
+        style_score=style_score,
+        combined_score=combined_score,
         label=label,
         status="decided",
     )
@@ -234,10 +242,10 @@ def submit():
         "content_id": content_id,
         "creator_id": creator_id,
         "guess": guess,
-        "confidence": model_score,
+        "confidence": combined_score,
         "label": label,
         "model_score": model_score,
-        "style_score": None,
+        "style_score": style_score,
     }), 200
 
 

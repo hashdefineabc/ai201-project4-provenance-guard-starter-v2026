@@ -63,9 +63,18 @@ def sentence_length_spread(text: str) -> float:
     Watch the edge case: a one-sentence submission has no spread at all, and
     `stdev` raises on fewer than two values. Decide what that should return
     before the attack set decides for you.
+
+    My choice: coefficient of variation (stdev / mean) of words per sentence.
+    Usually 0.1–1.0. **Higher means more human** (lumpier). Fewer than two
+    sentences returns 0.0 — there's no spread to measure — and style_signal
+    treats that case as "no evidence" rather than as AI-like.
     """
-    # TODO: replace this
-    return 0.0
+    lengths = [len(words(s)) for s in sentences(text)]
+    lengths = [n for n in lengths if n > 0]
+    if len(lengths) < 2:
+        return 0.0
+    mean = statistics.mean(lengths)
+    return round(statistics.stdev(lengths) / mean, 4)
 
 
 def type_token_ratio(text: str) -> float:
@@ -79,9 +88,23 @@ def type_token_ratio(text: str) -> float:
     longer, because common words repeat. Two texts of different lengths aren't
     directly comparable on it, and if your test inputs vary a lot in length,
     that alone can look like a signal.
+
+    My choice: the moving-average version. Take every run of 50 consecutive
+    words, compute unique/total in each, and average them. That keeps a
+    300-word text and a 100-word text comparable. Under 50 words it falls back
+    to the plain ratio. **Higher means more human.**
     """
-    # TODO: replace this
-    return 0.0
+    tokens = words(text)
+    if not tokens:
+        return 0.0
+    window = 50
+    if len(tokens) <= window:
+        return round(len(set(tokens)) / len(tokens), 4)
+    ratios = [
+        len(set(tokens[i:i + window])) / window
+        for i in range(len(tokens) - window + 1)
+    ]
+    return round(statistics.mean(ratios), 4)
 
 
 def punctuation_density(text: str) -> float:
@@ -93,9 +116,17 @@ def punctuation_density(text: str) -> float:
         semicolons, dashes — is a real choice. Semicolons and em dashes are
         more interesting than full stops, because they vary more between
         writers.
+
+    My choice: count the marks that vary between writers — commas and
+    ; : — – ( ) " ! ? — and divide by the word count. Full stops are skipped
+    (every text has them) and so are apostrophes (they're just contractions).
+    Usually 0.0–0.2. **Higher means more human.**
     """
-    # TODO: replace this
-    return 0.0
+    tokens = words(text)
+    if not tokens:
+        return 0.0
+    marks = re.findall(r"[,;:—–()\"!?]|(?<=\s)-(?=\s)", text)
+    return round(len(marks) / len(tokens), 4)
 
 
 # ── Combining them ───────────────────────────────────────────────────────────
@@ -121,9 +152,35 @@ def style_signal(text: str) -> float:
     clearly human, plain conventional human writing, lightly-edited AI — before
     you trust it. Plain and ordinary, not formal: formal prose reads as *human*
     to signal one, and it is plain writing that gets accused.
+
+    My rule: each measure is mapped onto 0–1 "AI-ness" with a straight line
+    between a human-looking value (→ 0) and an AI-looking value (→ 1), clamped
+    at the ends. The anchor values come from running the measures over the
+    calibration inputs. Then the two are averaged.
+
+        sentence spread      0.90 → 0     0.30 → 1
+        punctuation density  0.12 → 0     0.03 → 1
+        type-token ratio     measured, weight 0 — on the calibration inputs it
+                             pointed the wrong way (the AI text had the most
+                             varied vocabulary, the plain human text the least),
+                             so counting it would push plain writers toward AI.
+
+    One-sentence text has no spread, so that measure counts as 0.5 — no
+    evidence either way — instead of as maximally AI.
     """
-    # TODO: replace this
-    return 0.5
+    def ramp(value, human_end, ai_end):
+        position = (human_end - value) / (human_end - ai_end)
+        return min(max(position, 0.0), 1.0)
+
+    if not words(text):
+        return 0.5
+    if len(sentences(text)) < 2:
+        spread_ai = 0.5
+    else:
+        spread_ai = ramp(sentence_length_spread(text), 0.90, 0.30)
+    punct_ai = ramp(punctuation_density(text), 0.12, 0.03)
+
+    return round((spread_ai + punct_ai) / 2, 4)
 
 
 if __name__ == "__main__":
@@ -139,4 +196,3 @@ if __name__ == "__main__":
     print(f"type_token_ratio         {type_token_ratio(text)}")
     print(f"punctuation_density      {punctuation_density(text)}")
     print(f"style_signal             {style_signal(text)}   (higher = more likely AI)")
-    print("\nAll zeros? These are stubs — Milestone 4 is where you build them.")

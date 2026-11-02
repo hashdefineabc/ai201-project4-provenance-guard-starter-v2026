@@ -67,20 +67,24 @@
 
 ### Signal two — the style signal
 
-**What it measures:** Shape - sentence length spread, vocabulary variety, punctuation
+**What it measures:** The shape of the text, without reading it. Two measures count: how much sentence length varies (standard deviation ÷ mean of words per sentence) and punctuation density (commas, `; : — ( ) " ! ?` per word, full stops not counted). Each is mapped onto 0–1 AI-ness with a straight line between a human-looking and an AI-looking value, then the two are averaged. A third measure, type-token ratio (unique ÷ total words, averaged over 50-word windows), is computed but given zero weight — on my calibration inputs it pointed the wrong way: the AI text had the *most* varied vocabulary (0.92–0.96) and the plain human text the least (0.71).
 
-**Why that might differ between human and AI writing:** AI writes even, mid length sentences with a narrower vocabulary. Humans are lumpier
+**Why that might differ between human and AI writing:** AI writes even, mid-length sentences with tidy, sparse punctuation. Humans are lumpier — a two-word sentence next to a forty-word one, asides in dashes, a colon where a list starts.
 
-**What it can't see:** Meaning. Typos, chopped-up sentences or a pasted quotation change the score without changing who wrote it
+**What it can't see:** Meaning. Typos, chopped-up sentences or a pasted quotation change the score without changing who wrote it. And it shares signal one's blind spot: plain writing — short, even sentences with few commas — looks *more* machine-like to it than real AI text does (my plain human paragraph scored 0.99, the clearly-AI sample 0.83).
 
 ### The combining rule
 
 <!-- Write the rule in words, then give the numbers. What happens when the two
      signals disagree? -->
 
-**The rule:**
+**The rule:** Average the two signals equally. Then one asymmetric rule for disagreement: if *either* signal leans human, the combined score is capped inside the unsure band. So a high-confidence AI label needs both signals to lean AI, while a human label only needs the average to be low. Wrongly calling a writer human costs the site a little; wrongly calling them AI costs that person a lot, so a split between the signals is never allowed to become an accusation.
 
-**The numbers:**
+**The numbers:** (all in `config.py`)
+- `WEIGHT_MODEL_SIGNAL = 0.5`, `WEIGHT_STYLE_SIGNAL = 0.5`
+- `LEANS_HUMAN = 0.5` — a signal at or below this leans human
+- `DISAGREEMENT_CAP = 0.6` — the most the combined score can be when a signal leans human (below `AI_THRESHOLD = 0.65`)
+- Style-signal anchors (in `stylometry.style_signal`): sentence spread 0.90 → 0, 0.30 → 1; punctuation density 0.12 → 0, 0.03 → 1
 
 **Where it lives:** `scoring.py::combine_signals`
 
@@ -88,6 +92,21 @@
      somewhere else, say where. -->
 
 **A case where my two signals split, and what my rule does with it:**
+
+The `clearly_human` sample (a first-person paragraph about a sleepless night). The model signal gave it **0.45** — near the middle, because ordinary words in a personal story are fairly predictable to GPT-2. The style signal gave it **0.02**, strongly human: sentence lengths swing from two words to forty, and it is full of dashes, colons and commas. The average is **0.23**, which lands in high-confidence human. The cap doesn't fire because the combined score is already low — it only matters when a split would otherwise push a text toward AI.
+
+**Calibration run** (both signals printed separately). The first three rows are the files in `samples/`. The formal-human, plain-human and lightly-edited-AI rows are stand-in texts written with AI help, not by a person — to be replaced with my own writing and rerun:
+
+| Input | model | style | combined |
+|---|---|---|---|
+| clearly AI | 0.75 | 0.83 | 0.79 |
+| clearly human | 0.45 | 0.02 | 0.23 |
+| borderline | 0.35 | 0.53 | 0.44 |
+| formal human | 0.53 | 0.66 | 0.60 |
+| plain human | 0.85 | 0.99 | 0.92 |
+| lightly-edited AI | 0.65 | 0.69 | 0.67 |
+
+**What the rule can't fix:** the plain human paragraph scores 0.92 — higher than the real AI text. Both signals share the same blind spot, so they *agree*, and agreement is exactly when the rule lets an AI label through. No threshold separates it from clearly-AI text either, since it scores above it. This is the false-positive writer from Milestone 1, and with the current signals my criterion 1 would fail on plain writing.
 
 
 

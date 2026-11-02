@@ -57,6 +57,12 @@ DETECTOR_MAX_TOKENS = 400
 WEIGHT_MODEL_SIGNAL = 0.5
 WEIGHT_STYLE_SIGNAL = 0.5
 
+# The disagreement rule. If EITHER signal is at or below LEANS_HUMAN, the
+# combined score can't go above DISAGREEMENT_CAP — which sits inside the unsure
+# band, so a split between the signals can never produce an AI label.
+LEANS_HUMAN = 0.5
+DISAGREEMENT_CAP = 0.6
+
 
 # ─── Thresholds (Milestone 5) ────────────────────────────────────────────────
 # Where one label becomes another. Scores run 0.0 (confidently human) to 1.0

@@ -2,3 +2,4 @@
 {"timestamp": "2026-11-02T06:52:00+00:00", "content_id": "c_7990f6b060b6", "creator_id": "demo_instructor", "guess": "unsure", "model_score": 0.7544, "style_score": null, "combined_score": null, "label": "not built yet", "status": "decided"}
 {"timestamp": "2026-11-02T07:06:12+00:00", "content_id": "c_42825e7544ba", "creator_id": "demo_instructor", "guess": "unsure", "model_score": 0.7544, "style_score": null, "combined_score": null, "label": "not built yet", "status": "decided"}
 {"timestamp": "2026-11-02T07:09:34+00:00", "content_id": "c_b7e28f93c599", "creator_id": "demo_instructor", "guess": "unsure", "model_score": 0.7544, "style_score": null, "combined_score": null, "label": "not built yet", "status": "decided"}
+{"timestamp": "2026-11-02T07:16:11+00:00", "content_id": "c_f215fe85352d", "creator_id": "demo_instructor", "guess": "unsure", "model_score": 0.4445, "style_score": 0.0167, "combined_score": 0.2306, "label": "not built yet", "status": "decided"}

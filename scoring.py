@@ -51,12 +51,20 @@ def combine_signals(model_score: float, style_score: float) -> float:
 
     The weights in config.py are placeholders. Change them, or ignore them and
     write a different rule.
+
+    My rule: an equal-weight average, plus one asymmetric rule for
+    disagreement. If either signal leans human (≤ LEANS_HUMAN), the combined
+    score is capped at DISAGREEMENT_CAP, inside the unsure band. So an AI label
+    needs BOTH signals to lean AI; a human label only needs the average to be
+    low. Wrongly calling someone human is cheap, wrongly calling them AI is not.
     """
-    # TODO: replace this
-    return (
+    combined = (
         config.WEIGHT_MODEL_SIGNAL * model_score
         + config.WEIGHT_STYLE_SIGNAL * style_score
     )
+    if min(model_score, style_score) <= config.LEANS_HUMAN:
+        combined = min(combined, config.DISAGREEMENT_CAP)
+    return round(combined, 4)
 
 
 def score_to_label(score: float) -> tuple[str, str]:
