@@ -254,6 +254,18 @@ The original decision for `c_47dbce47d028` stays in the log unchanged, and the a
 - *What came back:* Working code and a calibration run that changed the picture of the signals. Type-token ratio pointed the opposite way from what the brief predicted, so it was given zero weight. The combining rule caps the score inside 'unsure' whenever the two signals disagree.
 - *What I changed:* I kept the code as it was. 
 
+**Moment 3 (unit 8)**
+
+- *What I asked for:* To turn on rate limiting, finish the audit log, then run the attack set and mark every attack held or broke.
+- *What came back:* The limits were already on. The one gap was that my own 400 rejections weren't logged, and it added `audit.log_rejection` for them. It ran the attack set, marked each of the 56 attacks with a stated rule (AI text landing on unsure counts as broke), and picked FP03 as the worst outcome.
+- *What I changed:* I read the marking rule and kept it. I wrote the reasoning for my rate limit numbers into the README from its draft.
+
+**Moment 4 (unit 8)**
+
+- *What I asked for:* To set up my five criteria as scenarios, run them, and diagnose every miss.
+- *What came back:* Scenarios for criteria 2, 3 and 5, and a new `run_appeal_eval.py` for criterion 4, because `run_eval.py` can only call `/submit`. It wrote the AI texts for criterion 2 and said so in the file. It wouldn't write the human pieces for criterion 1; it asked me for my own.
+- *What I changed:* I wrote the ten paragraphs for criterion 1 myself. They're real things from my year, and that's why the result means something: 7 of them were called AI.
+
 <!-- ═══════════════════════ UNIT 8 — THE TEST ═══════════════════════ -->
 
 ---
@@ -1141,17 +1153,51 @@ What it cost:
 
 ## What's Still Broken
 
-<!-- For each attack still getting through and each criterion still missed:
-     what you'd do, and why you stopped. -->
+After the improvement, 20 of 56 attacks still break and criterion 1 is still missed. They come from the same five patterns as the diagnosis.
 
+**Pattern A: plain human writing still gets the AI label.**
+*Criterion 1 (6 of 10 of my pieces), FP01–FP06 and PI06.*
 
+- **What I'd do next:** change the combining rule, not another weight.
+  - Right now an AI label needs both signals above 0.50 and an average of at least 0.65.
+  - Plain writing clears both bars easily, because both signals read plainness as AI.
+  - I'd require the model signal to be **well** above the plain-writing range (around 0.85, where GPT-2 output actually sits) before an AI label is allowed. Anything below that would stay in unsure, however the style signal reads.
+  - Then I'd test it against the human pieces *and* the AI set, so I can see what it costs.
+- **The longer-term fix is a better signal one.** A detector that compares GPT-2 against a second model would separate "predictable because simple" from "predictable because generated", where one model's perplexity alone can't.
+- **Why I stopped:** the milestone allowed one change before the re-run, and I spent it on the part of signal two that pointed the wrong way. Fixing the combining rule properly also needs more human writing than my 10 pieces and the 8 in the attack set. Otherwise I'd be tuning a threshold until my own test passes.
+
+**Pattern B: one fooled signal is enough to escape.**
+*EV01, EV08, PI01 (unsure) and PI02 (now human).*
+
+- **What I'd do:** stop giving the model signal a veto when its perplexity is high *because of* typos or odd tokens. One way is to run a spell-normalising pass before signal one, so EV01's typos stop driving perplexity up to 124.8. Another is to score with and without the first paragraph, which catches framing text like PI02's "SYSTEM:".
+- **Why I stopped:** both are new pre-processing stages, not tuning. The disagreement cap that makes this possible is also the rule that protects writers, so I didn't want to weaken it in the same unit I was trying to cut false positives.
+
+**Pattern C: signal two is cheap to forge, and now worse.**
+*EV02, EV05, EV06 (all now labelled human) and EV07.*
+
+- **This is the cost of my improvement.** With only sentence spread left, breaking text into short sentences, or adding one very long and one very short sentence, moves signal two all the way to "human".
+- **What I'd do:** add a second shape measure that does point the right way for plain writers, so spread isn't the only input. One candidate is the share of sentences that start with the same few words; AI text repeats "First," "Additionally," and similar openers. I'd calibrate it on plain human writing, not on the voicey sample that misled the punctuation measure.
+- **Why I stopped:** I'd need to calibrate it before trusting it, and that's the step that went wrong last time. I'd rather leave a known weakness, named here, than add a measure I haven't tested.
+
+**Pattern D: the route scores text that isn't writing.**
+*MF03 (now human), MF04 (human) and MF08 (AI at 0.887).*
+
+- **What I'd do:** reject text before the signals see it if:
+  - fewer than half its characters are letters, which would refuse MF03 and MF04 with a 400 and a logged rejection, or
+  - it's longer than 20,000 characters, with a 413. MF08 is currently cut to 400 tokens and scored on its opening alone.
+
+  I had the length cap in unit 7 and took it back out. I'd put it back.
+- **Why I stopped:** it's a route change, and I'd already used my one change. It's the cheapest fix on this list after RQ07.
+
+**Pattern E: the route trusts the request body.**
+*RQ07 (500, no log entry) and RQ06 (object as creator_id).*
+
+- **What I'd do:** in `app.py::submit`, replace `request.get_json(silent=True) or {}` with a check that the payload is a dict, as `/appeal` already does. Anything else gets a 400 and an `audit.log_rejection`. Then refuse a `creator_id` that isn't a string. It's about four lines.
+- **Why I stopped:** one change per re-run. This fixes no writer's outcome, and Pattern A does, so A got the change. It's the first thing I'd do next. While it's there, the service has a crash that leaves no trace in the log, which is exactly the kind of failure the audit log exists to catch.
 
 **The trade I'd make if this ran for real:**
 
-<!-- Two sentences. Fewer wrong accusations means more AI text getting through.
-     Say which way you'd go and WHO PAYS FOR IT. -->
-
-
+I'd go further toward fewer wrong accusations, giving the AI label only when both signals are strongly sure and sending everything else to unsure, even though that lets more AI text through (as the three evasions now labelled "human" already show). Honest writers competing against undisclosed AI use pay for that, and so does the site, whose labels mean less, but I'd rather they carry the cost than a non-native writer like FP03 who gets told, at 0.89 confidence, that their own careful writing was machine-made.
 
 <!-- ═════════════════════════════════════════════════════════════════════
 
