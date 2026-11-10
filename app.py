@@ -208,6 +208,7 @@ def submit():
     creator_id = payload.get("creator_id", "unknown")
 
     if not isinstance(text, str) or not text.strip():
+        audit.log_rejection(creator_id=creator_id, reason="missing_text")
         return jsonify({"error": "bad_request", "message":"Send Json with a non-empty \"text\""}), 400
 
     # step 3: one real signal that we first tested from the terminal
@@ -215,6 +216,7 @@ def submit():
         model_score = detector.model_signal(text)
     except ValueError as exc:
         # The detector refuses text under 3 tokens — that's bad input, not a crash.
+        audit.log_rejection(creator_id=creator_id, reason="text_too_short", detail=str(exc))
         return jsonify({"error": "text_too_short", "message": str(exc)}), 400
 
     # Milestone 4 - the second signal, and the rule that combines them.

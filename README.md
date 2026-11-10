@@ -261,14 +261,11 @@ The original decision for `c_47dbce47d028` stays in the log unchanged, and the a
 **My limits:** 5 per minute, 50 per day
 
 **Why those numbers and not others:**
-<!-- Think about two people: a real writer submitting their own work a few
-     times an hour, and a script sending a thousand variations to map your
-     thresholds. Your numbers have to be liveable for the first and hostile to
-     the second. -->
+A real writer submits their own work a few times an hour at most. Even someone pasting in a revision, checking the result, and trying again won't send more than five pieces in a minute, and fifty in a day is far more than any one person writes. A script trying to map my thresholds needs hundreds or thousands of near-identical variations to find where `unsure` turns into `ai`. At 5 a minute it gets 50 probes a day, so a thousand variations takes three weeks instead of a few seconds. The per-minute limit stops bursts, and the per-day limit stops a slow script that waits out each minute. I went lower than 10 a minute because every submission runs GPT-2 inline, so a burst also costs real compute.
 
-**What a caller counts as:** <!-- per address, or per creator_id? They fail
-differently — one script can look like a thousand callers, and one household
-can look like one. -->
+**What a caller counts as:** Per `creator_id`, falling back to the caller's IP address when the request doesn't send one. This is fair to a household or classroom sharing one address, because each writer gets their own limit. The weakness is that `creator_id` is whatever the caller says it is. A script that sends a new `creator_id` with every request gets a fresh limit each time, so the limit only stops an attacker who uses one name. Limiting per address as well would close that gap, but it would also start blocking people who share a network.
+
+**What a rejection leaves behind:** Every 429 writes a `rejected` entry to the audit log with `reason: rate_limited` and the limit that was hit. A 400 from `/submit` (missing text, or text too short to score) writes one too, with `reason: missing_text` or `text_too_short`. A flood shows up in `GET /log` as a run of rejections against one `creator_id`, not as silence.
 
 **The run of status codes when I pushed past it:**
 
