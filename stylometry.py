@@ -156,14 +156,22 @@ def style_signal(text: str) -> float:
     My rule: each measure is mapped onto 0–1 "AI-ness" with a straight line
     between a human-looking value (→ 0) and an AI-looking value (→ 1), clamped
     at the ends. The anchor values come from running the measures over the
-    calibration inputs. Then the two are averaged.
+    calibration inputs.
 
         sentence spread      0.90 → 0     0.30 → 1
-        punctuation density  0.12 → 0     0.03 → 1
+        punctuation density  measured, weight 0 since unit 8 — see below.
         type-token ratio     measured, weight 0 — on the calibration inputs it
                              pointed the wrong way (the AI text had the most
                              varied vocabulary, the plain human text the least),
                              so counting it would push plain writers toward AI.
+
+    Unit 8 change: punctuation density dropped to weight 0 for the same reason
+    as type-token ratio. Its anchors (0.12 → human, 0.03 → AI) came from a
+    voicey human sample full of dashes and colons. Plain human writing uses
+    almost nothing but full stops (the attack set's false-positive pieces
+    averaged 0.018 marks per word), while generated text uses more commas
+    (0.067). So for plain writers it pointed the wrong way, and maxed out at
+    "AI" on 7 of 7 false-positive attacks.
 
     One-sentence text has no spread, so that measure counts as 0.5 — no
     evidence either way — instead of as maximally AI.
@@ -178,9 +186,8 @@ def style_signal(text: str) -> float:
         spread_ai = 0.5
     else:
         spread_ai = ramp(sentence_length_spread(text), 0.90, 0.30)
-    punct_ai = ramp(punctuation_density(text), 0.12, 0.03)
 
-    return round((spread_ai + punct_ai) / 2, 4)
+    return round(spread_ai, 4)
 
 
 if __name__ == "__main__":

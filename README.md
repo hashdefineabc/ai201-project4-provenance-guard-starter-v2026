@@ -69,6 +69,8 @@
 
 **What it measures:** The shape of the text, without reading it. Two measures count: how much sentence length varies (standard deviation ÷ mean of words per sentence) and punctuation density (commas, `; : — ( ) " ! ?` per word, full stops not counted). Each is mapped onto 0–1 AI-ness with a straight line between a human-looking and an AI-looking value, then the two are averaged. A third measure, type-token ratio (unique ÷ total words, averaged over 50-word windows), is computed but given zero weight — on my calibration inputs it pointed the wrong way: the clearly-AI sample had more varied vocabulary (0.91) than any of the longer human texts, and my own plain paragraph had the least (0.71).
 
+> **Changed in unit 8:** punctuation density now has weight 0, so signal two is sentence-length spread alone. It pointed the wrong way for plain human writing; see **The Improvement**. The original design is left above unchanged.
+
 **Why that might differ between human and AI writing:** AI writes even, mid-length sentences with tidy, sparse punctuation. Humans are lumpier — a two-word sentence next to a forty-word one, asides in dashes, a colon where a list starts.
 
 **What it can't see:** Meaning. Typos, chopped-up sentences or a pasted quotation change the score without changing who wrote it. And it shares signal one's blind spot: plain writing — short sentences with few commas — leans machine-like to it (my own plain paragraph scored 0.59).
@@ -84,7 +86,7 @@
 - `WEIGHT_MODEL_SIGNAL = 0.5`, `WEIGHT_STYLE_SIGNAL = 0.5`
 - `LEANS_HUMAN = 0.5` — a signal at or below this leans human
 - `DISAGREEMENT_CAP = 0.6` — the most the combined score can be when a signal leans human (below `AI_THRESHOLD = 0.65`)
-- Style-signal anchors (in `stylometry.style_signal`): sentence spread 0.90 → 0, 0.30 → 1; punctuation density 0.12 → 0, 0.03 → 1
+- Style-signal anchors (in `stylometry.style_signal`): sentence spread 0.90 → 0, 0.30 → 1; punctuation density 0.12 → 0, 0.03 → 1 (weight 0 since unit 8)
 
 **Where it lives:** `scoring.py::combine_signals`
 
@@ -737,22 +739,403 @@ I'm not revising either criterion in `criteria.md`. Both were measurable, so nei
 
 ## The Improvement
 
-**What I changed:**
+**What I changed:** I dropped **punctuation density** from signal two, taking its weight from 0.5 to **0**. Signal two is now sentence-length spread alone, using the same 0.90 → 0 and 0.30 → 1 anchors. Punctuation density is still computed, the same way type-token ratio already was, but it no longer counts.
 
-**Which diagnosis pointed at it:**
+It's one change, in `stylometry.py::style_signal`. Nothing in `config.py`, `scoring.py` or `app.py` changed. All the after runs went against the same service, restarted with only this edit.
+
+**Which diagnosis pointed at it:** Pattern A. Punctuation density treated *less* punctuation as more AI-like. That's backwards for plain human writing, which uses almost nothing but full stops:
+
+- The false-positive attacks averaged 0.018 marks per word, and the AI text I generated averaged 0.067.
+- The measure maxed out at "AI" (0.96–1.00) on all 7 false-positive attacks.
+- On my own writing it was 0.76–1.00 for every piece labelled AI.
+
+It was the one part of the system that actively pointed the wrong way, and I had already zeroed type-token ratio for the same reason. So this is the same fix applied consistently, not a new idea.
+
+Before choosing it, I simulated three options offline on the inputs I'd already scored, with nothing sent to the service:
+
+- **No change.** This is the before-run.
+- **Punctuation at weight 0.** This is what I did.
+- **Punctuation fixed at a neutral 0.5.**
+
+The simulation predicted what the real re-run then showed: this fixes less than the diagnosis implied, because **signal one also reads plain writing as AI**. That's in the results below.
 
 ### Attack Run — After
 
-<!-- Same format. `run_attacks.py --label after` -->
+`python run_attacks.py --set attack_set --label after`. Full output: `results/attack_run_2026-11-10_1048_after.md`. Same marking rules as the before-run.
 
+**Before and after, side by side**
 
+| Family | Before: held / broke | After: held / broke |
+|---|---|---|
+| evasion | 4 / 6 | 4 / 6, but **3 now reach the human label** |
+| false_positive | 1 / 7 | **2 / 6** |
+| prompt_injection | 3 / 3 | 3 / 3 |
+| malformed (text) | 5 / 3 | 5 / 3 (MF05 fixed, MF03 newly broke) |
+| malformed (request) | 10 / 2 | 10 / 2 |
+| flood_same_creator | 12 / 0 | 12 / 0 |
+| **Total** | **35 / 21** | **36 / 20** |
+
+| Criterion | Target | Before (runs 1/2/3) | After (runs 1/2/3) | Before → After |
+|---|---|---|---|---|
+| 1. My own writing flagged as AI | 0 of 10 | 7/10 · 7/10 · 7/10 | 6/10 · 6/10 · 6/10 | MISSED → **MISSED** |
+| 2. Score spread, AI vs human | gap ≥ 0.30 | 0.179 · 0.179 · 0.179 | 0.311 · 0.311 · 0.311 | MISSED → **MET** |
+| 3. All three labels reachable | 3 of 3 | 3/3 · 3/3 · 3/3 | 3/3 · 3/3 · 3/3 | MET → **MET** |
+| 4. Appeal recorded; fake id 404 | 5/5 + 404 | 5/5 + 404 ×3 | 5/5 + 404 ×3 | MET → **MET** |
+| 5. Bad input 4xx, never 500; `/ping` ok | 3/3 + 200 | 3/3 ×3, ping 200 | 3/3 ×3, ping 200 | MET → **MET** |
+
+**Every attack, after**
+
+| ID | Family | Status | Guess | Score | Verdict | Change from before |
+|---|---|---|---|---|---|---|
+| EV01 | evasion | 200 | unsure | 0.582 | **BROKE** | still unsure |
+| EV02 | evasion | 200 | human | 0.340 | **BROKE** | AI text now labelled **human** |
+| EV03 | evasion | 200 | ai | 0.714 | **HELD** | still labelled AI |
+| EV04 | evasion | 200 | ai | 0.806 | **HELD** | still labelled AI |
+| EV05 | evasion | 200 | human | 0.348 | **BROKE** | AI text now labelled **human** |
+| EV06 | evasion | 200 | human | 0.286 | **BROKE** | AI text now labelled **human** |
+| EV07 | evasion | 200 | unsure | 0.543 | **BROKE** | still unsure |
+| EV08 | evasion | 200 | unsure | 0.600 | **BROKE** | still unsure |
+| EV09 | evasion | 200 | ai | 0.713 | **HELD** | still labelled AI |
+| EV10 | evasion | 200 | ai | 0.911 | **HELD** | still labelled AI |
+| FP01 | false_positive | 200 | ai | 0.677 | **BROKE** | still AI, 0.743 → 0.677 |
+| FP02 | false_positive | 200 | ai | 0.869 | **BROKE** | still AI, unchanged |
+| FP03 | false_positive | 200 | ai | 0.879 | **BROKE** | still AI, 0.891 → 0.879 |
+| FP04 | false_positive | 200 | ai | 0.861 | **BROKE** | still AI |
+| FP05 | false_positive | 200 | ai | 0.900 | **BROKE** | still AI, unchanged |
+| FP06 | false_positive | 200 | ai | 0.758 | **BROKE** | still AI, 0.849 → 0.758 |
+| FP07 | false_positive | 200 | unsure | 0.582 | **HELD** | **fixed**: AI → unsure |
+| FP08 | false_positive | 200 | unsure | 0.550 | **HELD** | unsure, not accused |
+| PI01 | prompt_injection | 200 | unsure | 0.429 | **BROKE** | still unsure |
+| PI02 | prompt_injection | 200 | human | 0.309 | **BROKE** | AI text now labelled **human** |
+| PI03 | prompt_injection | 200 | ai | 0.761 | **HELD** | still labelled AI |
+| PI04 | prompt_injection | 200 | unsure | 0.600 | **HELD** | label is a fixed string; nothing echoed |
+| PI05 | prompt_injection | 200 | ai | 0.677 | **HELD** | now labelled AI; log entry intact |
+| PI06 | prompt_injection | 200 | ai | 0.658 | **BROKE** | still AI, 0.719 → 0.658 |
+| MF01 | malformed | 400 | — | — | **HELD** | 400, logged |
+| MF02 | malformed | 400 | — | — | **HELD** | 400, logged |
+| MF03 | malformed | 200 | human | 0.250 | **BROKE** | control characters now labelled **human** |
+| MF04 | malformed | 200 | human | 0.256 | **BROKE** | punctuation labelled human |
+| MF05 | malformed | 200 | unsure | 0.600 | **HELD** | **fixed**: AI → unsure |
+| MF06 | malformed | 200 | unsure | 0.600 | **HELD** | no crash, unsure |
+| MF07 | malformed | 200 | unsure | 0.600 | **HELD** | no crash, unsure |
+| MF08 | malformed | 200 | ai | 0.887 | **BROKE** | still AI, 0.940 → 0.887 |
+| RQ01 | malformed | 400 | — | — | **HELD** | 400, logged |
+| RQ02 | malformed | 200 | unsure | 0.370 | **HELD** | scored as `unknown` |
+| RQ03 | malformed | 400 | — | — | **HELD** | 400, logged |
+| RQ04 | malformed | 400 | — | — | **HELD** | 400, logged |
+| RQ05 | malformed | 400 | — | — | **HELD** | 400, logged |
+| RQ06 | malformed | 200 | human | 0.275 | **BROKE** | still accepted; now labelled human |
+| RQ07 | malformed | 500 | — | — | **BROKE** | still 500, no log entry |
+| RQ08 | malformed | 400 | — | — | **HELD** | 400, logged |
+| RQ09 | malformed | 400 | — | — | **HELD** | 400, logged |
+| RQ10 | malformed | 429 | — | — | **HELD** | 429 by IP; never reached the route |
+| RQ11 | malformed | 429 | — | — | **HELD** | 429 by IP; never reached the route |
+| RQ12 | malformed | 400 | — | — | **HELD** | 400, logged |
+| FL01_01 | flood_same_creator | 200 | human | 0.264 | **HELD** | limit not reached |
+| FL01_02 | flood_same_creator | 200 | human | 0.264 | **HELD** | limit not reached |
+| FL01_03 | flood_same_creator | 200 | human | 0.264 | **HELD** | limit not reached |
+| FL01_04 | flood_same_creator | 200 | human | 0.264 | **HELD** | limit not reached |
+| FL01_05 | flood_same_creator | 200 | human | 0.264 | **HELD** | limit not reached |
+| FL01_06 | flood_same_creator | 429 | — | — | **HELD** | 429, logged |
+| FL01_07 | flood_same_creator | 429 | — | — | **HELD** | 429, logged |
+| FL01_08 | flood_same_creator | 429 | — | — | **HELD** | 429, logged |
+| FL01_09 | flood_same_creator | 429 | — | — | **HELD** | 429, logged |
+| FL01_10 | flood_same_creator | 429 | — | — | **HELD** | 429, logged |
+| FL01_11 | flood_same_creator | 429 | — | — | **HELD** | 429, logged |
+| FL01_12 | flood_same_creator | 429 | — | — | **HELD** | 429, logged |
+
+**Run log — after**
+
+`python run_eval.py --label after` and `python run_appeal_eval.py --label after`. Raw output: `results/run_2026-11-10_1048_after.md` and `results/appeal_run_2026-11-10_1048_after.md`. All three trials were again identical.
+
+| Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
+|---|---|---|---|---|---|
+| 1. My own writing flagged as AI | 0 of 10 labelled AI | 6/10 | 6/10 | 6/10 | **MISSED** |
+| 2. Score spread, AI set vs human set | gap ≥ 0.30 | 0.311 | 0.311 | 0.311 | **MET** |
+| 3. All three labels reachable | 3 of 3 labels, every trial | 3/3 | 3/3 | 3/3 | **MET** |
+| 4. Appeal always recorded; fake id gets 404 | 5 of 5 + 404, log unchanged | 5/5 + 404 | 5/5 + 404 | 5/5 + 404 | **MET** |
+| 5. Bad input gets 4xx with an error field, never 500; `/ping` still answers | 3 of 3 + ping 200 | 3/3 | 3/3 | 3/3, ping 200 | **MET** |
+
+Real output from trial 1. Criterion 1, from `run_eval.py::main`, scenario `c1 my own writing`. These are the first 4 of 10 entries; piece 3, the pottery paragraph, moved from AI (0.686) to unsure (0.614):
+
+```json
+[
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.394,
+    "model_score": 0.6159,
+    "style_score": 0.172,
+    "sent": "India is amazing. Everyone should visit atleast once. It has such diff"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.4764,
+    "model_score": 0.2681,
+    "style_score": 0.6848,
+    "sent": "The company invested heavily in exposing micro-services as MCP servers"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.6142,
+    "model_score": 0.5142,
+    "style_score": 0.7143,
+    "sent": "I love pottery. I picked it up last year."
+  },
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.7539,
+    "model_score": 0.7934,
+    "style_score": 0.7143,
+    "sent": "Meditation has been of great help to me. I started doing it regularly "
+  }
+]
+```
+
+Criterion 2, from `run_eval.py::main`. Average 0.8759 vs 0.565, a gap of 0.311:
+
+```json
+{
+  "ai_set": [
+    {
+      "status": 200,
+      "guess": "ai",
+      "confidence": 0.783,
+      "model_score": 0.7544,
+      "style_score": 0.8115,
+      "sent": "The importance of effective time management cannot be overstated in to"
+    },
+    {
+      "status": 200,
+      "guess": "ai",
+      "confidence": 0.9597,
+      "model_score": 0.9194,
+      "style_score": 1.0,
+      "sent": "Regular physical activity offers a wide range of benefits for both phy"
+    },
+    {
+      "status": 200,
+      "guess": "ai",
+      "confidence": 0.8509,
+      "model_score": 0.7019,
+      "style_score": 1.0,
+      "sent": "Remote work has fundamentally transformed the modern workplace. Organi"
+    },
+    {
+      "status": 200,
+      "guess": "ai",
+      "confidence": 0.9708,
+      "model_score": 0.9416,
+      "style_score": 1.0,
+      "sent": "Climate change is one of the most pressing challenges facing humanity "
+    },
+    {
+      "status": 200,
+      "guess": "ai",
+      "confidence": 0.8152,
+      "model_score": 0.731,
+      "style_score": 0.8993,
+      "sent": "Reading is a valuable habit that offers numerous cognitive and emotion"
+    }
+  ],
+  "human_set": [
+    {
+      "status": 200,
+      "guess": "human",
+      "confidence": 0.2223,
+      "model_score": 0.4445,
+      "style_score": 0.0,
+      "sent": "I didn't sleep. Not properly, anyway — I lay there listening to the bo"
+    },
+    {
+      "status": 200,
+      "guess": "unsure",
+      "confidence": 0.6142,
+      "model_score": 0.5142,
+      "style_score": 0.7143,
+      "sent": "I love pottery. I picked it up last year."
+    },
+    {
+      "status": 200,
+      "guess": "ai",
+      "confidence": 0.7539,
+      "model_score": 0.7934,
+      "style_score": 0.7143,
+      "sent": "Meditation has been of great help to me. I started doing it regularly "
+    },
+    {
+      "status": 200,
+      "guess": "unsure",
+      "confidence": 0.5727,
+      "model_score": 0.6046,
+      "style_score": 0.5408,
+      "sent": "I watched Ramayan movie yesterday with family. It was the best movie I"
+    },
+    {
+      "status": 200,
+      "guess": "ai",
+      "confidence": 0.662,
+      "model_score": 0.5926,
+      "style_score": 0.7313,
+      "sent": "I was working in the US at a big tech company. I recently joined a mic"
+    }
+  ]
+}
+```
+
+Criterion 3, from `run_eval.py::main`:
+
+```json
+[
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.783,
+    "model_score": 0.7544,
+    "style_score": 0.8115,
+    "sent": "The importance of effective time management cannot be overstated in to"
+  },
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.9597,
+    "model_score": 0.9194,
+    "style_score": 1.0,
+    "sent": "Regular physical activity offers a wide range of benefits for both phy"
+  },
+  {
+    "status": 200,
+    "guess": "human",
+    "confidence": 0.2223,
+    "model_score": 0.4445,
+    "style_score": 0.0,
+    "sent": "I didn't sleep. Not properly, anyway — I lay there listening to the bo"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.394,
+    "model_score": 0.6159,
+    "style_score": 0.172,
+    "sent": "India is amazing. Everyone should visit atleast once. It has such diff"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.537,
+    "model_score": 0.3489,
+    "style_score": 0.725,
+    "sent": "Time management matters more than people admit, especially now that wo"
+  },
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.7175,
+    "model_score": 0.5813,
+    "style_score": 0.8537,
+    "sent": "Time management matters a lot in todays fast-paced work environment. P"
+  }
+]
+```
+
+Criterion 4, from `run_appeal_eval.py::run_trial`. One appeal from trial 1, then the fake id:
+
+```json
+{
+  "appeal": {
+    "content_id": "c_673f8b4976d2",
+    "submit_status": 200,
+    "appeal_status": 200,
+    "appeal_response": {
+      "content_id": "c_673f8b4976d2",
+      "message": "Thanks. Your appeal has been recorded and this piece is now waiting for a person to review it.",
+      "original_guess": "unsure",
+      "status": "under_review"
+    },
+    "log_entry": {
+      "content_id": "c_673f8b4976d2",
+      "creator_id": "eval_appeal_t1_1_46ad08",
+      "event": "appeal",
+      "reasoning": "I wrote this myself, on 2026-11-10. Eval trial 1, piece 1.",
+      "status": "under_review",
+      "timestamp": "2026-11-10T05:18:13+00:00"
+    },
+    "pass": true
+  },
+  "fake_id": {
+    "content_id": "c_doesnotexist1",
+    "status": 404,
+    "response": {
+      "error": "not_found",
+      "message": "No submission with content_id 'c_doesnotexist1'. Check the id from your /submit response."
+    },
+    "log_count_before": 374,
+    "log_count_after": 374,
+    "pass": true
+  }
+}
+```
+
+Criterion 5, from `run_eval.py::main`, then `/ping` from `run_appeal_eval.py::main`:
+
+```json
+{
+  "bad_input": [
+    {
+      "status": 400,
+      "error": "bad_request",
+      "sent": "(empty text)"
+    },
+    {
+      "status": 400,
+      "error": "bad_request",
+      "sent": "{\"creator_id\": \"eval_bad_missing\"}"
+    },
+    {
+      "status": 400,
+      "error": "bad_request",
+      "sent": "{\"text\": null, \"creator_id\": \"eval_bad_null\"}"
+    }
+  ],
+  "ping_afterwards": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "service": "provenance-guard",
+      "you_sent": "still alive?"
+    }
+  }
+}
+```
 
 **Did it help, and how do I know:**
 
-<!-- Widening the unsure band usually fixes one problem and creates another.
-     Reporting that trade honestly is worth full credit. -->
+**A little, and it cost something real.**
 
+What it fixed:
+- **Criterion 2 went from MISSED to MET.** The gap went from 0.179 to 0.311. The AI set rose from 0.786 to 0.876, because generated text uses commas and no longer gets credit for them. The human set fell from 0.607 to 0.565.
+- **One false-positive attack was fixed.** FP07 went from AI to unsure.
+- **One of my own pieces stopped being accused.** The pottery paragraph went from AI to unsure.
+- **Every other false positive scored lower.** For example, FP06 went from 0.849 to 0.758 and FP01 from 0.743 to 0.677.
+- **MF05** (4,000 copies of `a`) went from AI to unsure.
 
+What it didn't fix:
+- **Criterion 1 is still MISSED,** at 6 of 10.
+- **Six of eight human attack pieces are still labelled AI.** That includes FP03, the non-native writer, which only went from 0.891 to 0.879, so the worst outcome is still there.
+
+The reason is in the signal scores. For FP02–FP05, sentence spread on its own still reads plain writing as AI (style 0.89–1.00). Signal one gives them 0.74–0.83. Both signals still lean AI, so the cap still never fires. Pattern A had two causes, and I removed only the smaller one. The remaining one is signal one's blind spot, plus a spread measure that also reads short, even sentences as AI.
+
+What it cost:
+- **Signal two lost half of what it measured, and that made it easier to fool.**
+- **Three evasion attacks moved from unsure to *human*.** EV02 went to 0.340, EV05 to 0.348 and EV06 to 0.286. Breaking up sentences or adding one very long and one very short sentence now moves signal two all the way to "human". Before, punctuation held it near the middle.
+- **PI02 moved to human (0.309).**
+- **MF03** (control characters) moved to human.
+- **The evasion count stayed at 6 broke, but the breaks are worse.** Before, AI text escaped into unsure. Now three AI pieces get a confident "this reads like it was written by a person".
+
+**Is it a good trade?** I'd keep it, on the rule I set in unit 7: wrongly calling a writer human costs the site a little, and wrongly calling them AI costs that person a lot. The change made one fewer person accused in the attack set and one fewer in my own writing, and it met criterion 2. It also let three AI texts be called human. That's the direction I said I'd rather be wrong in. But it's a small gain bought with a visible loss. The real false-positive fix has to come from signal one, or from a combining rule that doesn't trust two signals that are both fooled by plainness. One change can't do that.
 
 ---
 
