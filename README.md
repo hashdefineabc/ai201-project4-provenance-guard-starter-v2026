@@ -664,23 +664,74 @@ Criterion 5, from `run_eval.py::main`, scenario `c5 bad input`, then `/ping` fro
 }
 ```
 
+**Verdicts against the unit 7 targets**
+
+- **Criterion 1, false positives: MISSED.** The target was that none of my 10 pieces gets the AI label in any trial. 7 of 10 got it in every trial.
+- **Criterion 2, score spread: MISSED.** The target was a gap of 0.30 or more. The gap was 0.179 in every trial.
+- **Criterion 3, label coverage: MET.** All three labels appeared in every trial.
+- **Criterion 4, appeal path: MET.** 5 of 5 appeals were recorded and the fake id got a 404, in every trial.
+- **Criterion 5, bad input: MET.** 3 of 3 bad inputs got a 400 with an error field, and `/ping` answered afterwards.
+
 **Diagnoses**
 
-<!-- For each miss AND each broken attack: the stage and the mechanism.
+The two misses and the 21 broken attacks come down to **five problems**, not 23. To get these numbers I re-ran every failing input through `stylometry.py` and `detector.py` and recorded what each part of each signal measured. "Spread" is sentence-length spread and "punct" is punctuation density; both are part of signal two.
 
-     Your service has five stages: the route, signal one, signal two, the
-     combining rule, and the label mapping.
+**Pattern A: plain human writing reads as AI to *both* signals, so the disagreement rule never fires.**
+*Covers criterion 1, criterion 2, FP01–FP07 and PI06 (10 failures).*
+*Stages: signal two (main), signal one, and the combining rule.*
 
-     Not a diagnosis:  "The evasion attacks got through."
-     A diagnosis:      "Four evasion inputs got through. All four had typos
-                        added to AI-generated text. My second signal measures
-                        word variety, and typos raise word variety — so it read
-                        them as more human. My combining rule weights that
-                        signal at 0.6, so it dragged the whole score down."
+- **Signal two.** Its punctuation measure counts commas, dashes, semicolons, colons and so on per word, and treats *less* punctuation as more AI. Plain human writing mostly uses full stops, which the measure skips. FP01–FP07 averaged 0.018 marks per word, and FP03 had none at all. That is below the 0.03 "AI end", so this half of signal two maxed out at 0.96–1.00 on all seven. My AI-labelled pieces scored the same: 0.76–1.00.
+- **The AI text did the opposite.** My five generated AI paragraphs averaged 0.067 marks per word, nearly four times as much, so they scored *less* AI-like on punctuation (0.28–0.85).
+- **Why the measure points the wrong way.** I set its anchors from calibration inputs where the "human" example was the staff's voicey paragraph, full of dashes and colons. For plain writers it runs backwards, the same failure I'd already found in type-token ratio and gave zero weight.
+- **Sentence spread.** Plain writing in short, even sentences scored spreads of 0.24–0.52 on FP02–FP06, which is close to the 0.30 AI end. So that half of signal two adds to the problem rather than balancing it.
+- **Signal one.** Common words in ordinary order are easy for GPT-2 to predict. Perplexity on FP02–FP07 was 12.8–23.5, which gives a model score of 0.74–0.88. That's the blind spot I named for signal one in unit 7.
+- **The combining rule.** It caps the score at 0.60 only when *one* signal leans human (≤ 0.50). That protection assumes the two signals fail independently. On plain writing they fail *together*. Both read "plain" as "machine", so neither drops below 0.50, the cap never fires, and the average lands at 0.74–0.90. My own pieces did the same: style 0.66–0.99, model 0.51–0.81.
+- **Criterion 2** is the same pattern measured as an average. The AI set scored 0.786. The human set scored 0.607 because four of its five texts were my plain pieces (0.610–0.793). The staff's voicey sample was the only one that scored low (0.231).
 
-     Look for a pattern. Five failures on one signal is one problem, not five. -->
+**Pattern B: one fooled signal is enough to escape, because of the disagreement cap.**
+*Covers EV01, EV05, EV08, PI01 and PI02 (5 failures).*
+*Stages: signal one, then the combining rule.*
 
+- **Signal one is fooled by anything unusual in the text.** Typos (EV01), a heavy human edit (EV05), and odd framing tokens like "SYSTEM:" (PI02) all make the next word harder to predict. Perplexity rose to 124.8, 71.8 and 105.2, so the model score fell to 0.16, 0.32 and 0.20. EV08 (10 words) and PI01 did the same at smaller sizes.
+- **Signal two wasn't fooled.** It still read EV01 as 0.97 AI. This differs from the brief's example: in my system, typos fool signal *one*, not signal two.
+- **The combining rule then hands that one signal a veto.** Once either signal is ≤ 0.50, the score is capped at 0.60, inside unsure. This is the same rule that's meant to protect writers. It's built so that one signal leaning human is enough to block an AI label, and attackers only need to fool the cheaper signal. None of these reached the human label; they all stopped at unsure.
 
+**Pattern C: signal two only measures shape, and the shape is cheap to forge.**
+*Covers EV02, EV06 and EV07 (3 failures).*
+*Stage: signal two.*
+
+- **EV02** broke the AI text into short sentences ("Really."). Spread went to 0.85, so that half of the style score fell to 0.08. Combined: (0.594 + 0.53) / 2 = 0.56, which is unsure, with no cap needed.
+- **EV06** added one very long and one very short sentence. Spread went to 1.19 and style to 0.49, which triggered the cap.
+- **EV07** padded the text with semicolons and "moreover," until it was one sentence with 0.216 marks per word. Punctuation then scored fully human (0.00) and style fell to 0.25.
+
+This is exactly the blind spot named in `stylometry.py`: the signal can't read, so anything that changes the shape without changing the words moves it.
+
+**Pattern D: the route scores text that isn't writing.**
+*Covers MF04, MF05 and MF08 (3 failures).*
+*Stage: the route, which lets these through to the signals.*
+
+- **MF04, punctuation only.** It has zero words. Signal two returns its "no evidence" 0.5. Signal one sees GPT-2 perplexity of 738, so the model score is 0.011, and the average of 0.256 is a *human* label.
+- **MF05, 4,000 copies of `a`.** It's perfectly predictable (perplexity 1.0, model score 0.998), so it gets an *AI* label at 0.874.
+- **MF08, 60,000 characters.** It was accepted, then cut to the first 400 tokens. Those tokens are the same human camping paragraph repeated, and GPT-2 predicts a repeat almost perfectly (perplexity 2.9). So human text got the AI label at 0.940.
+
+The route checks only that `text` is a non-empty string of at least 3 tokens. It never asks whether the text contains words, or whether it's too long to score honestly.
+
+**Pattern E: the route trusts the shape of the request body.**
+*Covers RQ07 and RQ06 (2 failures).*
+*Stage: the route.*
+
+- **RQ07** sends a JSON array. `request.get_json(silent=True) or {}` returns the list, because a non-empty list is truthy. Then `payload.get("text")` raises `AttributeError`, and Flask returns a 500.
+- **RQ07 also left nothing in the audit log**, because the crash happens before any `log_rejection` call. The worst kind of failure here is one that shows up only as an absence.
+- **RQ06** sends `creator_id` as an object. The route never checks its type, so `{"id": "x"}` was written into the audit log as a creator_id, and the rate limiter fell back to counting by IP address for it.
+
+**The pattern that matters most is A.** Patterns B, C and D are ways AI text or junk gets the wrong label. Pattern A is the one that accuses real people: 7 of 8 human attack pieces and 7 of my own 10. Its root is in signal two. Its punctuation measure points the wrong way for plain writers, and that turns signal two into a second copy of signal one's blind spot, when it should be a check on it.
+
+**Criteria I'd tighten, even though they were met**
+
+- **Criterion 5 was too easy.** It covered only empty, missing and null `text`, and the attack set found a 500 (RQ07) with a body shape it never tried. Next time it should include non-object bodies, wrong types for `creator_id`, and an oversized `text`.
+- **Criterion 3 was met only through the staff sample.** None of my own writing reached the human label. It technically shows the label is reachable, but not reachable by the writers it's meant for.
+
+I'm not revising either criterion in `criteria.md`. Both were measurable, so neither counts as broken.
 
 ---
 
