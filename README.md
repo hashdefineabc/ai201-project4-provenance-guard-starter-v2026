@@ -391,21 +391,277 @@ In order: FP03, FP01, MF08 and PI06 are human writing labelled AI. PI02 and EV01
 
 ## Run Log and Verdicts
 
-<!-- Your five criteria across three trials. `run_eval.py --label before`. -->
+Criteria 1, 2, 3 and 5 were run with `python run_eval.py --label before`; their inputs are in `scenarios.py`. `run_eval.py` can only call `/submit`, so criterion 4 (the appeal path) and the `/ping` half of criterion 5 were run with `python run_appeal_eval.py --label before`, a script I added. It submits, appeals the content_id that came back, and reads `/log` to check. Both ran three trials back to back with nothing changed in between. Raw output: `results/run_2026-11-10_1027_before.md` and `results/appeal_run_2026-11-10_1027_before.md`.
+
+All three trials came out identical, to four decimal places. Neither signal has any randomness in it, so this is what a stable result looks like.
 
 | Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
 |---|---|---|---|---|---|
-| 1.  |  |  |  |  |  |
-| 2.  |  |  |  |  |  |
-| 3.  |  |  |  |  |  |
-| 4.  |  |  |  |  |  |
-| 5.  |  |  |  |  |  |
+| 1. My own writing flagged as AI | 0 of 10 labelled AI | 7/10 | 7/10 | 7/10 | **MISSED** |
+| 2. Score spread, AI set vs human set | gap ≥ 0.30 | 0.179 | 0.179 | 0.179 | **MISSED** |
+| 3. All three labels reachable | 3 of 3 labels, every trial | 3/3 | 3/3 | 3/3 | **MET** |
+| 4. Appeal always recorded; fake id gets 404 | 5 of 5 + 404, log unchanged | 5/5 + 404 | 5/5 + 404 | 5/5 + 404 | **MET** |
+| 5. Bad input gets 4xx with an error field, never 500; `/ping` still answers | 3 of 3 + ping 200 | 3/3 | 3/3 | 3/3, ping 200 | **MET** |
 
-**Real output from one trial**, pasted as text, naming the file and function
-that produced it:
+- **Criterion 1.** Seven of my ten pieces got the AI label, with scores from 0.686 to 0.826. The other three (plain_human, formal_human, and the Ramayan movie paragraph) landed in unsure. None got the human label. All ten have a style score of 0.586 or higher, and six are above 0.79.
+- **Criterion 2.** The AI set averaged **0.786** and the human set **0.607**, so the gap is 0.179. The human set's average is dragged up by my own pieces: the staff's clearly_human sample scored 0.231, but my four scored 0.610 to 0.793.
+- **Criterion 3.** Every trial got ai, ai, human, unsure, unsure, ai. The one human label came from the staff's clearly_human sample. `lightly_edited_ai` (meant as a borderline input) was labelled AI at 0.670.
+
+**Real output from trial 1 of each criterion**
+
+Criterion 1, from `run_eval.py::main`, scenario `c1 my own writing` in `scenarios.py`. These are the first 4 of 10 entries; all 10 are in the results file. The `label` text is left out here for length.
 
 ```json
+[
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.6009,
+    "model_score": 0.6159,
+    "style_score": 0.586,
+    "sent": "India is amazing. Everyone should visit atleast once. It has such diff"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.4469,
+    "model_score": 0.2681,
+    "style_score": 0.6257,
+    "sent": "The company invested heavily in exposing micro-services as MCP servers"
+  },
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.6857,
+    "model_score": 0.5142,
+    "style_score": 0.8572,
+    "sent": "I love pottery. I picked it up last year."
+  },
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.7928,
+    "model_score": 0.7934,
+    "style_score": 0.7922,
+    "sent": "Meditation has been of great help to me. I started doing it regularly "
+  }
+]
+```
 
+Criterion 2, from `run_eval.py::main`, scenarios `c2 spread: AI set` and `c2 spread: human set`. Average 0.7862 vs 0.6074:
+
+```json
+{
+  "ai_set": [
+    {
+      "status": 200,
+      "guess": "ai",
+      "confidence": 0.7925,
+      "model_score": 0.7544,
+      "style_score": 0.8307,
+      "sent": "The importance of effective time management cannot be overstated in to"
+    },
+    {
+      "status": 200,
+      "guess": "ai",
+      "confidence": 0.895,
+      "model_score": 0.9194,
+      "style_score": 0.8706,
+      "sent": "Regular physical activity offers a wide range of benefits for both phy"
+    },
+    {
+      "status": 200,
+      "guess": "ai",
+      "confidence": 0.709,
+      "model_score": 0.7019,
+      "style_score": 0.7161,
+      "sent": "Remote work has fundamentally transformed the modern workplace. Organi"
+    },
+    {
+      "status": 200,
+      "guess": "ai",
+      "confidence": 0.7913,
+      "model_score": 0.9416,
+      "style_score": 0.6411,
+      "sent": "Climate change is one of the most pressing challenges facing humanity "
+    },
+    {
+      "status": 200,
+      "guess": "ai",
+      "confidence": 0.7434,
+      "model_score": 0.731,
+      "style_score": 0.7558,
+      "sent": "Reading is a valuable habit that offers numerous cognitive and emotion"
+    }
+  ],
+  "human_set": [
+    {
+      "status": 200,
+      "guess": "human",
+      "confidence": 0.2306,
+      "model_score": 0.4445,
+      "style_score": 0.0167,
+      "sent": "I didn't sleep. Not properly, anyway — I lay there listening to the bo"
+    },
+    {
+      "status": 200,
+      "guess": "ai",
+      "confidence": 0.6857,
+      "model_score": 0.5142,
+      "style_score": 0.8572,
+      "sent": "I love pottery. I picked it up last year."
+    },
+    {
+      "status": 200,
+      "guess": "ai",
+      "confidence": 0.7928,
+      "model_score": 0.7934,
+      "style_score": 0.7922,
+      "sent": "Meditation has been of great help to me. I started doing it regularly "
+    },
+    {
+      "status": 200,
+      "guess": "unsure",
+      "confidence": 0.6095,
+      "model_score": 0.6046,
+      "style_score": 0.6143,
+      "sent": "I watched Ramayan movie yesterday with family. It was the best movie I"
+    },
+    {
+      "status": 200,
+      "guess": "ai",
+      "confidence": 0.7183,
+      "model_score": 0.5926,
+      "style_score": 0.844,
+      "sent": "I was working in the US at a big tech company. I recently joined a mic"
+    }
+  ]
+}
+```
+
+Criterion 3, from `run_eval.py::main`, scenario `c3 label coverage`:
+
+```json
+[
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.7925,
+    "model_score": 0.7544,
+    "style_score": 0.8307,
+    "sent": "The importance of effective time management cannot be overstated in to"
+  },
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.895,
+    "model_score": 0.9194,
+    "style_score": 0.8706,
+    "sent": "Regular physical activity offers a wide range of benefits for both phy"
+  },
+  {
+    "status": 200,
+    "guess": "human",
+    "confidence": 0.2306,
+    "model_score": 0.4445,
+    "style_score": 0.0167,
+    "sent": "I didn't sleep. Not properly, anyway — I lay there listening to the bo"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.6009,
+    "model_score": 0.6159,
+    "style_score": 0.586,
+    "sent": "India is amazing. Everyone should visit atleast once. It has such diff"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.4401,
+    "model_score": 0.3489,
+    "style_score": 0.5314,
+    "sent": "Time management matters more than people admit, especially now that wo"
+  },
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.6702,
+    "model_score": 0.5813,
+    "style_score": 0.7591,
+    "sent": "Time management matters a lot in todays fast-paced work environment. P"
+  }
+]
+```
+
+Criterion 4, from `run_appeal_eval.py::run_trial`. One appeal from trial 1 (all 5 look the same), then the fake id:
+
+```json
+{
+  "appeal": {
+    "content_id": "c_a7256a8dab28",
+    "submit_status": 200,
+    "appeal_status": 200,
+    "appeal_response": {
+      "content_id": "c_a7256a8dab28",
+      "message": "Thanks. Your appeal has been recorded and this piece is now waiting for a person to review it.",
+      "original_guess": "unsure",
+      "status": "under_review"
+    },
+    "log_entry": {
+      "content_id": "c_a7256a8dab28",
+      "creator_id": "eval_appeal_t1_1_ca3e31",
+      "event": "appeal",
+      "reasoning": "I wrote this myself, on 2026-11-10. Eval trial 1, piece 1.",
+      "status": "under_review",
+      "timestamp": "2026-11-10T04:57:43+00:00"
+    },
+    "pass": true
+  },
+  "fake_id": {
+    "content_id": "c_doesnotexist1",
+    "status": 404,
+    "response": {
+      "error": "not_found",
+      "message": "No submission with content_id 'c_doesnotexist1'. Check the id from your /submit response."
+    },
+    "log_count_before": 257,
+    "log_count_after": 257,
+    "pass": true
+  }
+}
+```
+
+Criterion 5, from `run_eval.py::main`, scenario `c5 bad input`, then `/ping` from `run_appeal_eval.py::main`:
+
+```json
+{
+  "bad_input": [
+    {
+      "status": 400,
+      "error": "bad_request",
+      "sent": "(empty text)"
+    },
+    {
+      "status": 400,
+      "error": "bad_request",
+      "sent": "{\"creator_id\": \"eval_bad_missing\"}"
+    },
+    {
+      "status": 400,
+      "error": "bad_request",
+      "sent": "{\"text\": null, \"creator_id\": \"eval_bad_null\"}"
+    }
+  ],
+  "ping_afterwards": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "service": "provenance-guard",
+      "you_sent": "still alive?"
+    }
+  }
+}
 ```
 
 **Diagnoses**
