@@ -20,6 +20,7 @@ Routes:
     POST /ping        the worked example. Already works. Don't edit it
     POST /submit      ← YOU BUILD THIS (Milestone 3, 4, 5)
     POST /appeal      ← YOU BUILD THIS (Milestone 5)
+    POST /review      unit 9 extension: input checks only, nothing logged
     GET  /log         the audit log. Already works
     GET  /health      is the service up, and is the model loaded
 """
@@ -305,6 +306,46 @@ def appeal():
         "original_guess": original.get("guess"),
         "message": "Thanks. Your appeal has been recorded and this piece is now waiting "
                    "for a person to review it.",
+    }), 200
+
+
+REVIEW_OUTCOMES = ("upheld", "overturned")
+
+
+@app.post("/review")
+def review():
+    """
+    A person decides an appeal. Unit 9 extension — input checks only.
+
+    Expects JSON:
+        {"content_id": "...", "reviewer_id": "...", "outcome": "upheld" | "overturned",
+         "reasoning": "..."}
+
+    Out of scope (see README): this does not write to the audit log and does
+    not check the item's state, so the status stays `under_review`.
+    """
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "bad_request", "message": "Send a JSON object"}), 400
+
+    # Every field is a required, non-empty string.
+    fields = {}
+    for name in ("content_id", "reviewer_id", "outcome", "reasoning"):
+        value = payload.get(name)
+        if not isinstance(value, str) or not value.strip():
+            return jsonify({"error": "bad_request", "message": f"Send JSON with a non-empty \"{name}\""}), 400
+        fields[name] = value.strip()
+
+    if fields["outcome"] not in REVIEW_OUTCOMES:
+        return jsonify({
+            "error": "bad_request",
+            "message": f"\"outcome\" must be one of {', '.join(REVIEW_OUTCOMES)}",
+        }), 400
+
+    return jsonify({
+        **fields,
+        "recorded": False,
+        "message": "Review received. It is not written to the audit log yet.",
     }), 200
 
 

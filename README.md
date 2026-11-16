@@ -1235,3 +1235,18 @@ I'd go further toward fewer wrong accusations, giving the AI label only when bot
 ---
 
 📖 **How to run this project: [RUNNING.md](RUNNING.md)**
+
+Unit 9: Capstone
+
+Shape: Extend one capability. Add ONE real capability to a system that already works — a second retrieval strategy, a fourth tool, a new label, an endpoint. The extension is the capability plus the evidence that it does what you claim.
+
+### Out of Scope
+
+**The extension:** one new route, `POST /review`, with its input checks. It accepts a `content_id`, `reviewer_id`, `outcome` (`upheld` or `overturned`) and reason, and returns a 400 for anything malformed.
+
+**Not doing:**
+
+1. **Touching the detector.** No changes to signals, weights or the combining rule. Changing them would muddy the unit 8 before/after numbers.
+2. **Reviewer accounts or auth.** `reviewer_id` is a plain string, trusted like `creator_id`. That means anyone can call it, which is a known gap.
+3. **A UI or automatic re-scoring.** The evidence is curl requests and responses, pasted as text.
+4. **Logging reviews or checking item state.** `/review` doesn't write to the audit log, and it doesn't check whether the item was ever appealed.
