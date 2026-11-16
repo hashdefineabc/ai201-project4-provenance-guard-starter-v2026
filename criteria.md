@@ -110,3 +110,73 @@ The malformed requests (empty text, missing text, text: null) each get a 4xx res
      A number you missed stays where it is, gets diagnosed, and gets a fix
      attempted. That's where the points are.
      ───────────────────────────────────────────────────────────────────────── -->
+
+---
+
+# Unit 9 — the extension
+
+The extension is `POST /review`: a reviewer sends `content_id`, `reviewer_id`, `outcome` (`upheld` or `overturned`) and `reasoning`, and the route checks that input. It doesn't write to the audit log or change an item's status (see **Out of Scope** in the README). Criteria 1–4 are about `/review`; criterion 5 checks that adding it, and the run log, didn't change what already worked.
+
+Each target has to hold in **all three trials**.
+
+---
+
+## 1. Valid reviews are accepted
+
+Of 10 well-formed review requests (5 `upheld`, 5 `overturned`, each with a different `content_id`), 10 of 10 return 200. Each response echoes back all four fields exactly as sent (surrounding spaces trimmed), plus `"recorded": false`.
+
+**Why this target:** There's no model in this route, only string checks, so the same input should always give the same answer. Anything short of 10/10 is a bug, not noise. A reviewer whose valid decision gets refused has no way to close the appeal, and the writer waiting on it stays stuck.
+
+---
+
+## 2. Bad review requests are refused, never crash (the bad path)
+
+These 12 malformed requests each return **400** with `"error": "bad_request"` and a message naming the field at fault. None returns 200 or 500:
+
+1. a body that isn't JSON (`hello`)
+2. a JSON list
+3. a JSON string (`"upheld"`)
+4. `content_id` missing
+5. `reviewer_id` missing
+6. `outcome` missing
+7. `reasoning` missing
+8. `reasoning` that's only spaces
+9. `content_id` given as a number
+10. `reviewer_id` given as `null`
+11. `outcome` of `"maybe"`
+12. `outcome` of `"Upheld"` (wrong case)
+
+**Why this target:** 12/12 and not "most", because a review is the last decision about a writer. Once reviews are logged (the next step after this unit), a malformed one that slips through becomes a permanent, wrong outcome on someone's record. Wrong case is on the list deliberately: `"Upheld"` and `"upheld"` would look like one outcome to a person but count as two to a script reading the log. A 500 is a fail even though it also refuses the request. `/submit` still crashes on a list body (RQ07), and this new route must not repeat that.
+
+---
+
+## 3. `/review` changes nothing it says it doesn't
+
+After all 22 requests from criteria 1 and 2, `logs/audit.jsonl` has **0 new lines**, and `GET /log` shows the same latest status for every `content_id` used as before the run.
+
+**Why this target:** The README promises this route records nothing yet. A route that wrote half a record, say an entry with no status change, would leave an appeal history that looks reviewed when it isn't. That's worse than a route that plainly does nothing. Zero is the only number that keeps that promise.
+
+---
+
+## 4. Every review attempt leaves a trace
+
+Each of those 22 `/review` requests writes **exactly one** line to `logs/runs.jsonl`. That line has `route` set to `/review`, the same `status` the caller received, and a non-null `error` if and only if the status was 400 or above. That's 22 of 22 lines, with no missing or duplicated ones.
+
+**Why this target:** Because of criterion 3, `runs.jsonl` is the *only* evidence a review was ever attempted. If a line is missing, a reviewer's decision vanished with no trace, and nobody could find out later that it happened. That's the failure the run log exists to prevent. Duplicates count as failures too, because they'd make one review look like two.
+
+---
+
+## 5. The original system still decides the same way
+
+The six files in `samples/` each get the **same `guess`** as in the unit 9 recorded session, in every trial. Each also gets a `model_score` and `style_score` within **±0.01** of that session's values:
+
+| Sample | guess | confidence | model_score | style_score |
+|---|---|---|---|---|
+| clearly_ai | ai | 0.783 | 0.7544 | 0.8115 |
+| clearly_human | human | 0.2223 | 0.4445 | 0.0 |
+| borderline | unsure | 0.537 | 0.3489 | 0.725 |
+| formal_human | unsure | 0.4764 | 0.2681 | 0.6848 |
+| plain_human | unsure | 0.394 | 0.6159 | 0.172 |
+| edited_ai | ai | 0.6531 | 0.5904 | 0.7157 |
+
+**Why this target:** This unit added a route and request hooks that run on *every* request, `/submit` included. If a hook changed what `/submit` sees, the labels would shift without anyone touching the detector, which the README rules out. ±0.01 and not "exactly equal": in the recorded session, every text sent twice scored identically to four decimals (clearly_ai gave 0.7544 both times), so the noise I've seen is zero. The 0.01 only leaves room for rounding and a different CPU, and anything beyond it is a real change. Not looser, because the label check alone catches a change only after it flips a label. edited_ai sits at 0.653, just 0.003 over the AI line, so a score drifting toward that line is the early warning, and a wide tolerance would hide it.
