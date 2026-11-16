@@ -1240,9 +1240,9 @@ Unit 9: Capstone
 
 Shape: Extend one capability. Add ONE real capability to a system that already works — a second retrieval strategy, a fourth tool, a new label, an endpoint. The extension is the capability plus the evidence that it does what you claim.
 
-### Out of Scope
-
 **The extension:** one new route, `POST /review`, with its input checks. It accepts a `content_id`, `reviewer_id`, `outcome` (`upheld` or `overturned`) and reason, and returns a 400 for anything malformed.
+
+### Out of Scope
 
 **Not doing:**
 
@@ -1250,3 +1250,73 @@ Shape: Extend one capability. Add ONE real capability to a system that already w
 2. **Reviewer accounts or auth.** `reviewer_id` is a plain string, trusted like `creator_id`. That means anyone can call it, which is a known gap.
 3. **A UI or automatic re-scoring.** The evidence is curl requests and responses, pasted as text.
 4. **Logging reviews or checking item state.** `/review` doesn't write to the audit log, and it doesn't check whether the item was ever appealed.
+
+
+---
+
+## Instrumentation
+
+Every HTTP request writes one line to `logs/runs.jsonl` (`runlog.py`, using hooks in `app.py`). Each line records:
+- **Who and what:** `timestamp`, `run_id`, `method`, `route` and `status`.
+- **Input and output:** `input` (submitted text is cut to 80 characters, and its full length is kept in `text_chars`) and `output` (the response body).
+- **Time:** `duration_ms` (wall time) and `cpu_ms`.
+- **`detector_was_loaded`:** `false` means this run paid to load the model.
+- **`error`:** what went wrong, if anything.
+
+`logs/audit.jsonl` still holds the nine-field decision record from unit 8.
+
+Failures are logged like everything else. A 400, a 429 and an unhandled exception all leave a line, and the exception becomes a 500 with its text in `error`. Before this, the list-body crash (RQ07 in unit 8) produced a 500 and **no log entry at all**.
+
+These entries come from one real session. I cloned the repo into an empty folder, followed RUNNING.md and started the service with the documented gunicorn command. Both log files from that session are committed.
+
+**Eleven successful runs** (one cold start, then the ten warm runs measured under What It Costs):
+
+```jsonl
+{"timestamp": "2026-11-16T14:21:06.683+00:00", "run_id": "r_639ace803711", "method": "POST", "route": "/submit", "status": 200, "duration_ms": 7289.6, "cpu_ms": 3123.7, "detector_was_loaded": false, "input": {"text_chars": 400, "text_preview": "Time management matters more than people admit, especially now that work moves a", "creator_id": "cold_1"}, "output": {"confidence": 0.537, "content_id": "c_d27451803bdd", "creator_id": "cold_1", "guess": "unsure", "label": "We can't tell from the writing alone whether this was written by a person or with help from AI. That happens often, especially with short or plainly written pieces, and it isn't a judgement about the writer.", "model_score": 0.3489, "style_score": 0.725}, "error": null}
+{"timestamp": "2026-11-16T14:21:06.941+00:00", "run_id": "r_c6c1031e7a0d", "method": "POST", "route": "/submit", "status": 200, "duration_ms": 152.5, "cpu_ms": 164.4, "detector_was_loaded": true, "input": {"text_chars": 680, "text_preview": "The importance of effective time management cannot be overstated in today's fast", "creator_id": "cost_1"}, "output": {"confidence": 0.783, "content_id": "c_0586284f0562", "creator_id": "cost_1", "guess": "ai", "label": "Our checks suggest this was probably written with AI. Automated checks can be wrong, and they are wrong more often about plain, simple writing. If you wrote this yourself, you can ask for a person to review it.", "model_score": 0.7544, "style_score": 0.8115}, "error": null}
+{"timestamp": "2026-11-16T14:21:07.278+00:00", "run_id": "r_18bda9819ff3", "method": "POST", "route": "/submit", "status": 200, "duration_ms": 194.0, "cpu_ms": 238.3, "detector_was_loaded": true, "input": {"text_chars": 489, "text_preview": "I didn't sleep. Not properly, anyway — I lay there listening to the boiler tick ", "creator_id": "cost_2"}, "output": {"confidence": 0.2223, "content_id": "c_b7a03a05bead", "creator_id": "cost_2", "guess": "human", "label": "This reads like it was written by a person.", "model_score": 0.4445, "style_score": 0.0}, "error": null}
+{"timestamp": "2026-11-16T14:21:07.432+00:00", "run_id": "r_c87736b5d79c", "method": "POST", "route": "/submit", "status": 200, "duration_ms": 95.3, "cpu_ms": 124.1, "detector_was_loaded": true, "input": {"text_chars": 400, "text_preview": "Time management matters more than people admit, especially now that work moves a", "creator_id": "cost_3"}, "output": {"confidence": 0.537, "content_id": "c_38cd599ab3c9", "creator_id": "cost_3", "guess": "unsure", "label": "We can't tell from the writing alone whether this was written by a person or with help from AI. That happens often, especially with short or plainly written pieces, and it isn't a judgement about the writer.", "model_score": 0.3489, "style_score": 0.725}, "error": null}
+{"timestamp": "2026-11-16T14:21:07.606+00:00", "run_id": "r_38a1c2cc63cb", "method": "POST", "route": "/submit", "status": 200, "duration_ms": 135.7, "cpu_ms": 194.6, "detector_was_loaded": true, "input": {"text_chars": 762, "text_preview": "The company invested heavily in exposing micro-services as MCP servers, making b", "creator_id": "cost_4"}, "output": {"confidence": 0.4764, "content_id": "c_12deed193062", "creator_id": "cost_4", "guess": "unsure", "label": "We can't tell from the writing alone whether this was written by a person or with help from AI. That happens often, especially with short or plainly written pieces, and it isn't a judgement about the writer.", "model_score": 0.2681, "style_score": 0.6848}, "error": null}
+{"timestamp": "2026-11-16T14:21:07.708+00:00", "run_id": "r_622834a48485", "method": "POST", "route": "/submit", "status": 200, "duration_ms": 62.4, "cpu_ms": 76.4, "detector_was_loaded": true, "input": {"text_chars": 253, "text_preview": "India is amazing. Everyone should visit atleast once. It has such different cult", "creator_id": "cost_5"}, "output": {"confidence": 0.394, "content_id": "c_c3896903b6c2", "creator_id": "cost_5", "guess": "unsure", "label": "We can't tell from the writing alone whether this was written by a person or with help from AI. That happens often, especially with short or plainly written pieces, and it isn't a judgement about the writer.", "model_score": 0.6159, "style_score": 0.172}, "error": null}
+{"timestamp": "2026-11-16T14:21:07.812+00:00", "run_id": "r_c9aad67c26b0", "method": "POST", "route": "/submit", "status": 200, "duration_ms": 70.0, "cpu_ms": 85.0, "detector_was_loaded": true, "input": {"text_chars": 263, "text_preview": "I wanted to talk to you about something personal. Lately, I’ve been feeling ment", "creator_id": "cost_6"}, "output": {"confidence": 0.6531, "content_id": "c_324aa3e6c46a", "creator_id": "cost_6", "guess": "ai", "label": "Our checks suggest this was probably written with AI. Automated checks can be wrong, and they are wrong more often about plain, simple writing. If you wrote this yourself, you can ask for a person to review it.", "model_score": 0.5904, "style_score": 0.7157}, "error": null}
+{"timestamp": "2026-11-16T14:21:07.944+00:00", "run_id": "r_86b2f46a08fe", "method": "POST", "route": "/submit", "status": 200, "duration_ms": 96.0, "cpu_ms": 129.2, "detector_was_loaded": true, "input": {"text_chars": 680, "text_preview": "The importance of effective time management cannot be overstated in today's fast", "creator_id": "cost_7"}, "output": {"confidence": 0.783, "content_id": "c_141ee8b52f11", "creator_id": "cost_7", "guess": "ai", "label": "Our checks suggest this was probably written with AI. Automated checks can be wrong, and they are wrong more often about plain, simple writing. If you wrote this yourself, you can ask for a person to review it.", "model_score": 0.7544, "style_score": 0.8115}, "error": null}
+{"timestamp": "2026-11-16T14:21:08.083+00:00", "run_id": "r_7c1e3b75fea1", "method": "POST", "route": "/submit", "status": 200, "duration_ms": 104.8, "cpu_ms": 139.8, "detector_was_loaded": true, "input": {"text_chars": 489, "text_preview": "I didn't sleep. Not properly, anyway — I lay there listening to the boiler tick ", "creator_id": "cost_8"}, "output": {"confidence": 0.2223, "content_id": "c_f7cd5cae1250", "creator_id": "cost_8", "guess": "human", "label": "This reads like it was written by a person.", "model_score": 0.4445, "style_score": 0.0}, "error": null}
+{"timestamp": "2026-11-16T14:21:08.205+00:00", "run_id": "r_3f50873f0989", "method": "POST", "route": "/submit", "status": 200, "duration_ms": 87.3, "cpu_ms": 113.7, "detector_was_loaded": true, "input": {"text_chars": 400, "text_preview": "Time management matters more than people admit, especially now that work moves a", "creator_id": "cost_9"}, "output": {"confidence": 0.537, "content_id": "c_c8fdd49a423e", "creator_id": "cost_9", "guess": "unsure", "label": "We can't tell from the writing alone whether this was written by a person or with help from AI. That happens often, especially with short or plainly written pieces, and it isn't a judgement about the writer.", "model_score": 0.3489, "style_score": 0.725}, "error": null}
+{"timestamp": "2026-11-16T14:21:08.348+00:00", "run_id": "r_fa82c1d3e8c8", "method": "POST", "route": "/submit", "status": 200, "duration_ms": 109.3, "cpu_ms": 153.7, "detector_was_loaded": true, "input": {"text_chars": 762, "text_preview": "The company invested heavily in exposing micro-services as MCP servers, making b", "creator_id": "cost_10"}, "output": {"confidence": 0.4764, "content_id": "c_d4dbaaecd301", "creator_id": "cost_10", "guess": "unsure", "label": "We can't tell from the writing alone whether this was written by a person or with help from AI. That happens often, especially with short or plainly written pieces, and it isn't a judgement about the writer.", "model_score": 0.2681, "style_score": 0.6848}, "error": null}
+```
+
+**Failed runs from the same session.** The four requests are:
+1. empty text
+2. text too short to score
+3. a JSON list instead of an object, which crashes `/submit` with an unhandled exception (Pattern E, still unfixed and out of scope)
+4. the sixth request in a minute from one creator, which was rate-limited
+
+```jsonl
+{"timestamp": "2026-11-16T14:21:08.357+00:00", "run_id": "r_4f7a0969b2ec", "method": "POST", "route": "/submit", "status": 400, "duration_ms": 0.4, "cpu_ms": 0.4, "detector_was_loaded": true, "input": {"text_chars": 0, "text_preview": "", "creator_id": "fail_empty"}, "output": {"error": "bad_request", "message": "Send Json with a non-empty \"text\""}, "error": "bad_request"}
+{"timestamp": "2026-11-16T14:21:08.366+00:00", "run_id": "r_c58c6f5b62ee", "method": "POST", "route": "/submit", "status": 400, "duration_ms": 0.5, "cpu_ms": 0.5, "detector_was_loaded": true, "input": {"text_chars": 3, "text_preview": "Hi.", "creator_id": "fail_short"}, "output": {"error": "text_too_short", "message": "Text is too short to score — a few sentences at least."}, "error": "text_too_short"}
+{"timestamp": "2026-11-16T14:21:08.374+00:00", "run_id": "r_6e6132017695", "method": "POST", "route": "/submit", "status": 500, "duration_ms": 0.3, "cpu_ms": 0.3, "detector_was_loaded": true, "input": {"non_object_body": "list"}, "output": {"error": "internal_error", "message": "Something went wrong on our side. It has been logged.", "run_id": "r_6e6132017695"}, "error": "AttributeError: 'list' object has no attribute 'get'"}
+{"timestamp": "2026-11-16T14:21:08.425+00:00", "run_id": "r_ff5fd277740c", "method": "POST", "route": "/submit", "status": 429, "duration_ms": 0.5, "cpu_ms": 0.5, "detector_was_loaded": true, "input": {"text_chars": 0, "text_preview": "", "creator_id": "flooder"}, "output": {"error": "rate_limited", "limit": "5 per 1 minute", "message": "Too many submissions. Try again shortly."}, "error": "rate_limited"}
+```
+
+---
+
+## What It Costs
+
+**The cost is CPU time on my own machine.** There's no API, no tokens and no spend: the model runs locally.
+
+| | Wall time | CPU time |
+|---|---|---|
+| **Warm `/submit`, average of 10 runs** | **110.7 ms** | **141.9 ms** |
+| Warm range (min – max) | 62.4 – 194.0 ms | 76.4 – 238.3 ms |
+| Cold start (first `/submit` after a start) | 7,290 ms | 3,124 ms |
+| One-time model download | ~90 s for 526 MB | — |
+
+**How I measured it:**
+- **Timers.** `app.py` takes `time.perf_counter()` (wall) and `time.process_time()` (CPU) in `before_request`. `after_request` writes the difference to `runs.jsonl`, so the numbers cover the whole request inside the server, including both signals, scoring and the audit write.
+- **The runs.** I started a fresh gunicorn server (`--workers 1`), sent one cold `/submit`, then sent ten `/submit` requests one after another. The texts were the six files in `samples/`, cycled, between 253 and 762 characters. Each request used its own `creator_id`, so the rate limiter didn't interfere. The averages are the mean of those ten `duration_ms` and `cpu_ms` values, the eleven entries pasted above.
+- **Machine.** Apple M1, 8 cores, 8 GB RAM, Python 3.12.3, torch 2.15.0. The gunicorn worker held 560–750 MB resident.
+
+**What the numbers mean:**
+- **CPU time is higher than wall time** because torch spreads GPT-2's matrix maths across several cores at once. `process_time()` counts every thread in the process, so it's only a per-request number when requests don't overlap. Mine ran one at a time.
+- **Cost depends on length, up to a cap.** The shortest text (253 characters) was the fastest run at 62 ms. The detector stops at 400 tokens (`DETECTOR_MAX_TOKENS`), so a longer submission costs no more than that.
+- **The cold start costs about 65 warm runs.** It only happens once per server start, which is one more reason to run one long-lived gunicorn worker instead of restarting.

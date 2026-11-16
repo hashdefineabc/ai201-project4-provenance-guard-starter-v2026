@@ -25,17 +25,72 @@ Routes:
     GET  /health      is the service up, and is the model loaded
 """
 
+import time
 import uuid
 
-from flask import Flask, jsonify, request
+from flask import Flask, g, jsonify, request
+from werkzeug.exceptions import HTTPException
 
 import audit
 import config
 import detector
+import runlog
 import scoring
 import stylometry
 
 app = Flask(__name__)
+
+
+# ── The run log — UNIT 9 ──────────────────────────────────────────────────────
+# Every request leaves one line in logs/runs.jsonl: route, input, output,
+# status, wall time and CPU time, and the error if there was one. These hooks
+# are registered before the limiter's, so a 429 is timed and logged too.
+
+@app.before_request
+def start_run():
+    g.run_id = f"r_{uuid.uuid4().hex[:12]}"
+    g.started = time.perf_counter()
+    g.cpu_started = time.process_time()
+    # False on the first /submit after a start: that run pays to load the model.
+    g.detector_was_loaded = detector._model is not None
+    g.error = None
+
+
+@app.errorhandler(Exception)
+def crashed(exc):
+    """An unexpected exception becomes a logged 500, not a silent one."""
+    if isinstance(exc, HTTPException):
+        return exc
+    g.error = f"{type(exc).__name__}: {exc}"
+    return jsonify({
+        "error": "internal_error",
+        "message": "Something went wrong on our side. It has been logged.",
+        "run_id": g.get("run_id"),
+    }), 500
+
+
+@app.after_request
+def log_run(response):
+    body = response.get_json(silent=True)
+    error = g.get("error")
+    if error is None and response.status_code >= 400:
+        error = body.get("error") if isinstance(body, dict) else None
+        error = error or f"http_{response.status_code}"
+    started = g.get("started", time.perf_counter())
+    cpu_started = g.get("cpu_started", time.process_time())
+    runlog.log_run(
+        run_id=g.get("run_id"),
+        method=request.method,
+        route=request.path,
+        status=response.status_code,
+        duration_ms=round((time.perf_counter() - started) * 1000, 1),
+        cpu_ms=round((time.process_time() - cpu_started) * 1000, 1),
+        detector_was_loaded=g.get("detector_was_loaded"),
+        input=runlog.summarise_input(request.get_json(silent=True)),
+        output=runlog.summarise_output(body),
+        error=error,
+    )
+    return response
 
 
 # ── Rate limiting — UNIT 8 ────────────────────────────────────────────────────

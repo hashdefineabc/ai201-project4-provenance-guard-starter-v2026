@@ -8,6 +8,74 @@ assumed — the starter ships one that already answers.
 
 ---
 
+## Path B — local, with logs (unit 9)
+
+This project runs on your own machine, not a host: `torch` plus the `gpt2` weights need more memory than a free tier's 512 MB (see "This project will not fit a free host" below). Tested from a fresh `git clone` on macOS 26, Apple Silicon (arm64), Python 3.12.3.
+
+### What the environment needs
+
+| Need | Detail |
+|---|---|
+| Python | **3.11, 3.12 or 3.13** (3.14 breaks the pinned stack). Tested on 3.12.3. macOS's built-in `/usr/bin/python3` is 3.9 and **will not work** |
+| Dependencies | `requirements.txt`. Tested with Flask 3.1.3, Flask-Limiter 3.12, gunicorn 23.0.0, torch 2.15.0, transformers 4.57.6, requests 2.34.2, certifi 2026.10.23 |
+| Disk | ~1 GB for `.venv` (torch alone is ~630 MB), plus ~525 MB for the model |
+| Model | `gpt2` from Hugging Face. `model.safetensors` and tokenizer files, ~525 MB, saved in `~/.cache/huggingface/hub/models--gpt2`. Downloaded once, then used offline |
+| RAM | 4 GB minimum. The gunicorn worker holding the loaded model measured 560–750 MB resident (`ps -o rss`) |
+| Network | Only for `pip install` and the one model download. No API key, nothing hosted |
+
+### Set up, once
+
+```bash
+git clone <this repo> provenance-guard && cd provenance-guard
+python3.12 -m venv .venv            # any of 3.11–3.13; check with: python3.12 --version
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python detector.py        # downloads gpt2 (~525 MB) and scores a sample
+VIRTUAL_ENV=$PWD/.venv .venv/bin/python test.py   # should end "9 passed, 0 failed"
+```
+
+The commands call `.venv/bin/...` directly instead of relying on `source .venv/bin/activate`. If your shell has `python` aliased to the system Python, the alias beats the venv even after activating it, and you get "No module named 'flask'".
+
+### Start it — the one command
+
+```bash
+.venv/bin/gunicorn app:app --bind 127.0.0.1:5000 --workers 1 --timeout 120
+```
+
+- **`gunicorn`, not `python app.py`.** It's a real server, with no debugger and no reloader.
+- **`--workers 1`.** The rate limiter keeps its counts in memory, and each worker would load its own copy of the model. With 2 workers a caller gets twice the limit, and the service uses twice the RAM.
+- **`--timeout 120`.** The first `/submit` after a start loads the model, and that took 9.5 s here. gunicorn's default 30 s timeout kills a slower machine's worker in the middle of that load.
+- **Port 5000 taken?** On macOS, AirPlay Receiver often holds it. Use `--bind 127.0.0.1:5050` and change the port in the `curl` commands to match.
+
+Check it from a second terminal:
+
+```bash
+curl http://127.0.0.1:5000/health
+curl -X POST http://127.0.0.1:5000/submit -H "Content-Type: application/json" \
+  -d '{"text": "I wrote this paragraph myself on the train this morning.", "creator_id": "me"}'
+```
+
+### What it records
+
+| File | One line per | What's in it |
+|---|---|---|
+| `logs/runs.jsonl` | **HTTP request**, of any route or status | `timestamp`, `run_id`, `method`, `route`, `status`, `duration_ms`, `cpu_ms`, `detector_was_loaded`, `input` (text cut to 80 chars plus its length), `output`, `error` |
+| `logs/audit.jsonl` | decision, appeal or rejection | The nine-field unit 8 record. Read it with `GET /log` |
+
+Failures are recorded too:
+- a 400 has `error: "bad_request"`
+- a 429 has `error: "rate_limited"`
+- an unhandled exception becomes a 500 with the exception text in `error`
+
+`detector_was_loaded: false` marks a cold start: that run paid to load the model.
+
+A request whose body has no usable `creator_id` is rate-limited by IP address. On one machine, every such request shares the `127.0.0.1` limit, so a few malformed requests in a row can turn the next one into a 429.
+
+`samples_staff/` and `attack_set/` are gitignored, so they aren't in a fresh clone. Test with `samples/`.
+
+Read it back with `tail -n 10 logs/runs.jsonl`. Commit both files: they're the record that the service actually ran.
+
+---
+
 ## Before your first class
 
 ```bash

@@ -113,4 +113,6 @@ RATE_LIMIT_STORAGE = "memory://"
 
 LOG_DIR = ROOT / "logs"
 AUDIT_LOG = LOG_DIR / "audit.jsonl"
+# Unit 9: one line per HTTP request — route, input, output, duration, errors.
+RUN_LOG = LOG_DIR / "runs.jsonl"
 RESULTS_DIR = ROOT / "results"
