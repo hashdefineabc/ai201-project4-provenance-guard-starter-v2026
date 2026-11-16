@@ -1320,3 +1320,68 @@ These entries come from one real session. I cloned the repo into an empty folder
 - **CPU time is higher than wall time** because torch spreads GPT-2's matrix maths across several cores at once. `process_time()` counts every thread in the process, so it's only a per-request number when requests don't overlap. Mine ran one at a time.
 - **Cost depends on length, up to a cap.** The shortest text (253 characters) was the fastest run at 62 ms. The detector stops at 400 tokens (`DETECTOR_MAX_TOKENS`), so a longer submission costs no more than that.
 - **The cold start costs about 65 warm runs.** It only happens once per server start, which is one more reason to run one long-lived gunicorn worker instead of restarting.
+
+
+---
+
+## Extension Run Log
+
+Three trials of the five unit 9 criteria in `criteria.md`. Each was a separate run of `run_extension_eval.py --trial N`, against one gunicorn server started with the RUNNING.md command (`--bind 127.0.0.1:5050`, because port 5000 was taken). Nothing changed between runs. Full output for each trial is in `results/extension_run_2026-11-16_200449_trial1.md`, `_200454_trial2.md` and `_200459_trial3.md`.
+
+**What each criterion needed run against it:**
+1. **Valid reviews:** ten well-formed `/review` requests (5 `upheld`, 5 `overturned`) for `content_id`s that really were `under_review` in the audit log.
+2. **Bad path:** the 12 malformed requests listed in `criteria.md`, sent as raw bodies so non-JSON and non-object bodies arrive exactly as written.
+3. **Nothing recorded:** the audit log's line count and the latest status of those 10 items, read through `GET /log` before and after the 22 requests.
+4. **Every attempt traced:** `logs/runs.jsonl` read before and after, with each new `/review` line matched to the status the caller got, in order.
+5. **Original decisions unchanged:** the six `samples/` files sent to `/submit` and compared with the recorded session's guess and scores.
+
+| Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
+|---|---|---|---|---|---|
+| 1. Valid reviews are accepted | 10 of 10 | 10/10 | 10/10 | 10/10 | MET |
+| 2. Bad review requests get a 400, never a 500 | 12 of 12 | 12/12 | 12/12 | 12/12 | MET |
+| 3. `/review` records nothing | 0 new audit lines, 0 statuses changed | +0 lines, 0 changed | +0 lines, 0 changed | +0 lines, 0 changed | MET |
+| 4. Every review attempt leaves a trace | 22 of 22 | 22/22 | 22/22 | 22/22 | MET |
+| 5. Original system decides the same way | 6 of 6 (same guess, scores ±0.01) | 6/6 | 6/6 | 6/6 | MET |
+
+**All five MET, in all three runs.** That's expected for criteria 1–4: `/review` is deterministic string checking with no model in it, so the same input gives the same answer every time. Criterion 5 had the most room to miss, and it didn't move: every sample scored identically to four decimals in all three trials.
+
+**Checking the checker.** A run where everything passes could also mean a checker that can't fail. So I ran `run_extension_eval.py::run_trial` once more against a fake service in the same process, where `/review` returns 500 and `/submit` returns scores of 0.99. Nothing was sent to the real server. Criteria 1, 2, 4 and 5 dropped to 0/10, 0/12, 0/22 and 0/6. Criterion 3 still passed, correctly: a crashing route writes nothing to the audit log.
+
+### Real output — run 3
+
+All of this comes from `results/extension_run_2026-11-16_200459_trial3.md`, produced by `run_extension_eval.py::run_trial` against `app.py::review` and `app.py::submit`.
+
+**Criterion 1.** Two of the ten valid reviews (`upheld` and `overturned`): the request, the status and the response. `app.py::review` echoes every field and says it recorded nothing:
+
+```json
+{"sent": {"content_id": "c_47dbce47d028", "reviewer_id": "rev_eval_t3_85f27d", "outcome": "upheld", "reasoning": "Eval t3_85f27d, review 1: checked against the writer's drafts."}, "status": 200, "response": {"content_id": "c_47dbce47d028", "message": "Review received. It is not written to the audit log yet.", "outcome": "upheld", "reasoning": "Eval t3_85f27d, review 1: checked against the writer's drafts.", "recorded": false, "reviewer_id": "rev_eval_t3_85f27d"}, "pass": true}
+{"sent": {"content_id": "c_082d279987fe", "reviewer_id": "rev_eval_t3_85f27d", "outcome": "overturned", "reasoning": "Eval t3_85f27d, review 6: checked against the writer's drafts."}, "status": 200, "response": {"content_id": "c_082d279987fe", "message": "Review received. It is not written to the audit log yet.", "outcome": "overturned", "reasoning": "Eval t3_85f27d, review 6: checked against the writer's drafts.", "recorded": false, "reviewer_id": "rev_eval_t3_85f27d"}, "pass": true}
+```
+
+**Criterion 2.** Three of the twelve malformed requests: a JSON list, a null `reviewer_id`, and wrong-case `"Upheld"`. `app.py::review` refused each with a 400 that names the problem:
+
+```json
+{"case": "JSON list", "sent": "[\"upheld\"]", "status": 400, "response": {"error": "bad_request", "message": "Send a JSON object"}, "pass": true}
+{"case": "reviewer_id null", "sent": "{\"content_id\": \"c_x\", \"reviewer_id\": null, \"outcome\": \"upheld\", \"reasoning\": \"x\"}", "status": 400, "response": {"error": "bad_request", "message": "Send JSON with a non-empty \"reviewer_id\""}, "pass": true}
+{"case": "outcome \"Upheld\"", "sent": "{\"content_id\": \"c_x\", \"reviewer_id\": \"rev_eval\", \"outcome\": \"Upheld\", \"reasoning\": \"x\"}", "status": 400, "response": {"error": "bad_request", "message": "\"outcome\" must be one of upheld, overturned"}, "pass": true}
+```
+
+**Criterion 3.** The audit-log check. The log was read through `app.py::get_log` before and after the 22 requests:
+
+```json
+{"audit_lines_before": 481, "audit_lines_after": 481, "content_ids_checked": 10, "statuses_changed": [], "pass": true}
+```
+
+**Criterion 4.** The first and last of the 22 `/review` lines that run made in `logs/runs.jsonl`. They were written by `app.py::log_run` through `runlog.py::log_run`. The 200 has `error: null`, and the 400 has `error: "bad_request"`. Counts: `requests_sent: 22`, `review_lines_written: 22`, `lines_matching: 22`.
+
+```jsonl
+{"timestamp": "2026-11-16T14:34:57.712+00:00", "run_id": "r_276a9795510e", "method": "POST", "route": "/review", "status": 200, "duration_ms": 0.2, "cpu_ms": 0.2, "detector_was_loaded": true, "input": {"content_id": "c_47dbce47d028", "reviewer_id": "rev_eval_t3_85f27d", "outcome": "upheld", "reasoning": "Eval t3_85f27d, review 1: checked against the writer's drafts."}, "output": {"content_id": "c_47dbce47d028", "message": "Review received. It is not written to the audit log yet.", "outcome": "upheld", "reasoning": "Eval t3_85f27d, review 1: checked against the writer's drafts.", "recorded": false, "reviewer_id": "rev_eval_t3_85f27d"}, "error": null}
+{"timestamp": "2026-11-16T14:34:57.735+00:00", "run_id": "r_f1e8e84d4f26", "method": "POST", "route": "/review", "status": 400, "duration_ms": 0.1, "cpu_ms": 0.1, "detector_was_loaded": true, "input": {"content_id": "c_x", "reviewer_id": "rev_eval", "outcome": "Upheld", "reasoning": "x"}, "output": {"error": "bad_request", "message": "\"outcome\" must be one of upheld, overturned"}, "error": "bad_request"}
+```
+
+**Criterion 5.** Two of the six samples. `edited_ai` is the closest one to a label line (0.6531 against the 0.65 AI line), and it came back unchanged from `app.py::submit`:
+
+```json
+{"sample": "clearly_ai", "status": 200, "expected": {"guess": "ai", "model_score": 0.7544, "style_score": 0.8115}, "got": {"content_id": "c_c812952f09d1", "guess": "ai", "confidence": 0.783, "model_score": 0.7544, "style_score": 0.8115}, "pass": true}
+{"sample": "edited_ai", "status": 200, "expected": {"guess": "ai", "model_score": 0.5904, "style_score": 0.7157}, "got": {"content_id": "c_7e9810eadadd", "guess": "ai", "confidence": 0.6531, "model_score": 0.5904, "style_score": 0.7157}, "pass": true}
+```
