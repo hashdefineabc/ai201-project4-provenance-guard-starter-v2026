@@ -58,7 +58,7 @@ curl -X POST http://127.0.0.1:5000/submit -H "Content-Type: application/json" \
 
 | File | One line per | What's in it |
 |---|---|---|
-| `logs/runs.jsonl` | **HTTP request**, of any route or status | `timestamp`, `run_id`, `method`, `route`, `status`, `duration_ms`, `cpu_ms`, `detector_was_loaded`, `input` (text cut to 80 chars plus its length), `output`, `error` |
+| `logs/runs.jsonl` | **HTTP request**, of any route or status | `timestamp`, `run_id`, `method`, `route`, `status`, `duration_ms`, `cpu_ms`, `detector_was_loaded`, `input` (text cut to 80 chars plus its length), `output`, `error`. Every other string is capped at 300 chars, keeping its length, so no line runs past a few KB |
 | `logs/audit.jsonl` | decision, appeal or rejection | The nine-field unit 8 record. Read it with `GET /log` |
 
 Failures are recorded too:

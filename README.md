@@ -1236,7 +1236,7 @@ I'd go further toward fewer wrong accusations, giving the AI label only when bot
 
 📖 **How to run this project: [RUNNING.md](RUNNING.md)**
 
-Unit 9: Capstone
+## Capstone
 
 Shape: Extend one capability. Add ONE real capability to a system that already works — a second retrieval strategy, a fourth tool, a new label, an endpoint. The extension is the capability plus the evidence that it does what you claim.
 
@@ -1258,7 +1258,7 @@ Shape: Extend one capability. Add ONE real capability to a system that already w
 
 Every HTTP request writes one line to `logs/runs.jsonl` (`runlog.py`, using hooks in `app.py`). Each line records:
 - **Who and what:** `timestamp`, `run_id`, `method`, `route` and `status`.
-- **Input and output:** `input` (submitted text is cut to 80 characters, and its full length is kept in `text_chars`) and `output` (the response body).
+- **Input and output:** `input` (submitted text is cut to 80 characters, and its full length is kept in `text_chars`) and `output` (the response body). Since milestone 6, every other string in either one is capped at 300 characters, and the cut is marked with how much was removed.
 - **Time:** `duration_ms` (wall time) and `cpu_ms`.
 - **`detector_was_loaded`:** `false` means this run paid to load the model.
 - **`error`:** what went wrong, if anything.
@@ -1320,6 +1320,20 @@ These entries come from one real session. I cloned the repo into an empty folder
 - **CPU time is higher than wall time** because torch spreads GPT-2's matrix maths across several cores at once. `process_time()` counts every thread in the process, so it's only a per-request number when requests don't overlap. Mine ran one at a time.
 - **Cost depends on length, up to a cap.** The shortest text (253 characters) was the fastest run at 62 ms. The detector stops at 400 tokens (`DETECTOR_MAX_TOKENS`), so a longer submission costs no more than that.
 - **The cold start costs about 65 warm runs.** It only happens once per server start, which is one more reason to run one long-lived gunicorn worker instead of restarting.
+- **`/review` costs almost nothing.** Its normal lines in `runs.jsonl` show 0.1–0.2 ms, because it's string checks with no model. The 1 MB-reasoning request took 5 ms, nearly all of it parsing the body.
+- **The milestone 6 fix didn't change the cost.** Over the 17 warm `/submit` runs in each set of trials, the mean was 96.5 ms wall / 122.7 ms CPU before the fix and 92.0 / 121.4 after. Both are inside the original 62–194 ms range.
+
+**For a hundred people a day.** Assuming each person submits one piece (reviews are too cheap to count), the compute comes to under 30 seconds a day:
+
+```
+CPU:   100 submissions × 141.9 ms = 14,190 ms = 14.2 s of CPU a day
+Wall:  100 submissions × 110.7 ms = 11,070 ms = 11.1 s
+     + 1 cold start a day × 7.3 s =  7.3 s
+                                    = 18.4 s of server time a day
+Share of the day busy:  18.4 s ÷ 86,400 s = 0.02%
+```
+
+At a hundred people a day, the cost isn't compute, it's keeping one 560–750 MB process running for the other 99.98% of the day. That's why this project can't use a 512 MB free host (see RUNNING.md), and on my own laptop the extra cost is zero.
 
 
 ---
@@ -1489,3 +1503,50 @@ The same 1 MB-reasoning request's line, now whole:
 - **`/review` still *accepts* a 1 MB reasoning,** with a 200, and echoes all of it back in the response. The fix bounded the log, not the route. A length limit on `/review`'s fields, returning a 400, would be the next change, and criterion 2's bad-request list should gain an oversized case to cover it.
 - **The audit log is still unbounded.** `audit.py` writes `creator_id` and `reasoning` from `/submit` and `/appeal` at full length, through a different path this fix doesn't touch.
 - **`logs/runs.jsonl` is now 6.7 MB.** Almost all of that is the before-run evidence above. I kept it rather than trimming it, because it's the record of the miss.
+
+---
+
+## What's Still Broken (Capstone)
+
+**No criterion is still missed.** All five were met in milestone 5, and the tightened criterion 4 went from MISSED to MET after the fix. So this section is about the targets that were too easy, and the gaps they didn't measure.
+
+**Criterion 2 is the target set too low, and it's the next one I'd tighten.**
+- **Why it's too low:** it only sends small malformed requests, so 12/12 was never in doubt. It never asks how *big* a field may be.
+- **What I'd tighten it to:** 15 of 15. The extra three are oversized fields that must each get a 400:
+  - a `reasoning` over 2,000 characters
+  - a `content_id` over 64 characters
+  - a `reviewer_id` over 64 characters
+- **Why it would miss today:** in milestone 6, a 1,000,000-character `reasoning` got a **200**, and the whole megabyte was echoed back in the response.
+- **What I'd do:** add a length limit to each field in `app.py::review`, returning a 400 that names the field.
+- **Why I stopped:** milestone 6 allowed one fix. I aimed it at the run log, because that was the stage the tightened criterion 4 diagnosed, and it's the evidence criterion 4 depends on.
+
+**Criterion 1 was also set low** (deterministic checks, so 10/10 was certain). Tightening it wouldn't teach me anything, though, because no stricter number changes what string checks do. The weak spot was the bad path, which is criterion 2.
+
+**Gaps outside the five criteria, named so they aren't mistaken for working:**
+- **Reviews aren't recorded anywhere but `runs.jsonl`, and there they're cut to 300 characters.** This was out of scope by design (see **Out of Scope**, item 4), and the milestone 6 fix made it sharper: a long, honest reasoning keeps only its length.
+- **`audit.jsonl` is still unbounded.** `audit.py` writes `creator_id` and appeal `reasoning` at full length, through a path the run-log fix doesn't touch. *Why I stopped:* the audit log is the unit 8 record, and changing its shape would mean its old and new entries differ.
+- **`/submit` still crashes on a JSON list body** (Pattern E / RQ07). It's now a *logged* 500 instead of a silent one, but it's still a 500. *Why I stopped:* the detector and `/submit` were out of scope for this unit, so the unit 8 before/after numbers stay comparable.
+
+**What I'd do next, if this were real and I had another unit:** first, make `/review` record its decision in the audit log, and only for items that are actually `under_review` (the two pieces I cut in milestone 4). I'd do that one first because, until it exists, an appeal can never be closed, which is the gap this extension was meant to fill, and recording reviews in full would also undo milestone 6's trade, where a long review reasoning survives only as its first 300 characters.
+
+---
+
+## How I Used AI (Capstone)
+
+**Moment 1 — scope**
+
+- *What I asked for:* To write what's out of scope for the extension: two or three things we could do and decided not to.
+- *What came back:* It picked an extension for me, `POST /review` (closing an appeal as `upheld` or `overturned`), and wrote a long Out of Scope section with three items. When I asked it to break the extension into separate pieces of work, it listed six: an audit function, the route, the state check, the response, and two evidence runs.
+- *What I changed:* I deleted the long version and asked for it at the end of the README, short and simple. Then I cut the extension down to one piece, the route with its input checks. A fourth Out of Scope item followed from that: no logging and no state check.
+
+**Moment 2 — building it and running it outside the editor**
+
+- *What I asked for:* To build the route and confirm the original system still works. Then Milestone 3, Path B: the run command, structured logging, and a cost measurement.
+- *What came back:* The route, and checks that the old routes still answered. It found that my shell's `python` runs the system Python 3.9 even inside the venv, and that an old copy of the app was holding port 5000. It added `runlog.py`, so every request (failures included) gets one line in `logs/runs.jsonl`. Then it cloned the repo into an empty folder and followed RUNNING.md. Its first recorded session failed: `samples_staff/` is gitignored, and malformed requests share one IP's rate limit. It wrote both into RUNNING.md and measured ~111 ms per `/submit` over ten runs.
+- *What I changed:* I committed the route myself (`m1`) before the logging work. I chose Path B, the brief's expected answer for this project, because the model doesn't fit a free host.
+
+**Moment 3 — Runs and the one fix**
+
+- *What I asked for:* I asked it to run the test and analyze
+- *What came back:* It gave a new `run_extension_eval.py`, and three trials where all five were met. It said plainly that criteria 1–4 were set low. It also checked that the checker could fail, by running it against a fake broken service. Then it tightened criterion 4 to "every line at most 8 KB". That missed: a 1 MB reasoning made a 2 MB log line, because the run log only shortened the field called `text`. The fix bounded every logged value, and it reported the trade: long review reasoning is now cut to 300 characters in the log.
+- *What I changed:* I didn't change much
