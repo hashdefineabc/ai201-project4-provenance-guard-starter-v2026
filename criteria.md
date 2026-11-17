@@ -164,6 +164,13 @@ Each of those 22 `/review` requests writes **exactly one** line to `logs/runs.js
 
 **Why this target:** Because of criterion 3, `runs.jsonl` is the *only* evidence a review was ever attempted. If a line is missing, a reviewer's decision vanished with no trace, and nobody could find out later that it happened. That's the failure the run log exists to prevent. Duplicates count as failures too, because they'd make one review look like two.
 
+> **Tightened in milestone 6:** criterion 4 was met 22/22 in all three runs, and the target was set low. It counted lines but never looked at what was in them. New target: the 22 requests **plus 3 oversized ones** each leave exactly one line, and **no `/review` line in `runs.jsonl` is over 8 KB (8,192 bytes)**. The oversized ones are:
+> - a valid review whose `reasoning` is 1,000,000 characters
+> - a `reviewer_id` of 100,000 characters
+> - a JSON list of 100,000 items
+>
+> **Why tightened, and why 8 KB:** I met the original with nothing to learn. Its weak spot is that a trace has to stay *readable*. A normal `/review` line is about 600 bytes. A 1 MB `reasoning` gets copied into the line twice (input, and the echoed output), making it 2 MB. A handful of those makes `runs.jsonl` slow to read back, and that's the file criterion 4 says is the only evidence a review happened. 8 KB is over 10× a normal line, so no honest request comes close, and it's still small enough that an oversized request can't take over the log. The original target stays above, unchanged.
+
 ---
 
 ## 5. The original system still decides the same way

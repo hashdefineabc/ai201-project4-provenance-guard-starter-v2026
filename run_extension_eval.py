@@ -17,6 +17,8 @@ between. Each trial:
      status didn't change                                         -> criterion 3
   4. checks logs/runs.jsonl got exactly one matching line per
      review request                                               -> criterion 4
+  4b. sends 3 oversized requests and checks every /review line is
+     at most 8 KB (tightened in milestone 6)                      -> criterion 4, tightened
   5. submits the six samples/ files and compares guess and scores
      with the recorded session                                    -> criterion 5
 
@@ -64,6 +66,16 @@ EXPECTED = {
 }
 TOLERANCE = 0.01
 
+# Criterion 4, tightened in milestone 6: oversized requests and the line cap.
+OVERSIZED = [
+    ("reasoning 1,000,000 chars", json.dumps({"content_id": "c_x", "reviewer_id": "rev_eval",
+                                              "outcome": "upheld", "reasoning": "a" * 1_000_000})),
+    ("reviewer_id 100,000 chars", json.dumps({"content_id": "c_x", "reviewer_id": "r" * 100_000,
+                                              "outcome": "upheld", "reasoning": "x"})),
+    ("JSON list of 100,000 items", json.dumps(["upheld"] * 100_000)),
+]
+MAX_LINE_BYTES = 8192
+
 JSON = {"Content-Type": "application/json"}
 
 
@@ -110,6 +122,14 @@ def run_trial(url, trial):
         bad.append({"case": name, "sent": raw, "status": r.status_code, "response": got, "pass": ok})
         sent.append(r.status_code)
 
+    # Criterion 4, tightened — oversized requests. Sent before criterion 3's
+    # "after" read, so they count toward "nothing recorded" too.
+    oversized = []
+    for name, raw in OVERSIZED:
+        r = requests.post(f"{url}/review", data=raw, headers=JSON, timeout=30)
+        oversized.append({"case": name, "bytes_sent": len(raw), "status": r.status_code})
+        sent.append(r.status_code)
+
     # Criterion 3 — nothing recorded, no status changed.
     statuses_after, audit_after = latest_statuses(url)
     changed = [cid for cid in under_review if statuses_after.get(cid) != statuses_before.get(cid)]
@@ -122,19 +142,35 @@ def run_trial(url, trial):
     }
 
     # Criterion 4 — exactly one matching run-log line per review request.
-    new_runs = runlog.read_runs()[runs_before:]
-    review_runs = [r for r in new_runs if r.get("route") == "/review"]
-    matched = 0
+    # Read raw lines, so the size checked is the size on disk.
+    raw_lines = config.RUN_LOG.read_text(encoding="utf-8").splitlines()[runs_before:]
+    review_lines = [l for l in raw_lines if json.loads(l).get("route") == "/review"]
+    review_runs = [json.loads(l) for l in review_lines]
+    matches = []
     for status, run in zip(sent, review_runs):
         has_error = run.get("error") is not None
-        if run.get("status") == status and has_error == (status >= 400):
-            matched += 1
+        matches.append(run.get("status") == status and has_error == (status >= 400))
+    sizes = [len(l.encode("utf-8")) for l in review_lines]
+    for o, size in zip(oversized, sizes[22:]):
+        o["log_line_bytes"] = size
     c4 = {
-        "requests_sent": len(sent),
-        "review_lines_written": len(review_runs),
-        "lines_matching": matched,
-        "example_lines": [review_runs[0], review_runs[-1]] if review_runs else [],
-        "pass": len(review_runs) == len(sent) and matched == len(sent),
+        # The original target: the first 22 requests.
+        "requests_sent": 22,
+        "review_lines_written": min(len(review_runs), 22),
+        "lines_matching": sum(matches[:22]),
+        "pass": len(review_runs) >= 22 and all(matches[:22]),
+        # The tightened target: all 25, each line at most MAX_LINE_BYTES.
+        "tightened_requests_sent": len(sent),
+        "tightened_lines_written": len(review_runs),
+        "tightened_lines_matching": sum(matches),
+        "lines_within_8kb": sum(s <= MAX_LINE_BYTES for s in sizes),
+        "largest_line_bytes": max(sizes) if sizes else 0,
+        "normal_line_bytes": sizes[0] if sizes else 0,
+        "oversized": oversized,
+        "tightened_pass": (len(review_runs) == len(sent) and all(matches)
+                           and all(s <= MAX_LINE_BYTES for s in sizes)),
+        "example_lines": [review_runs[0], review_runs[21]] if len(review_runs) > 21 else [],
+        "oversized_line_example": review_lines[22][:600] if len(review_lines) > 22 else None,
     }
 
     # Criterion 5 — the original /submit decides the same way.
@@ -162,6 +198,7 @@ def main():
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--trial", type=int, required=True)
     parser.add_argument("--url", default=f"http://{config.HOST}:{config.PORT}")
+    parser.add_argument("--label", default="")
     args = parser.parse_args()
 
     t = run_trial(args.url, args.trial)
@@ -172,6 +209,10 @@ def main():
             f"{t['c3']['audit_lines_after'] - t['c3']['audit_lines_before']} new lines, "
             f"{len(t['c3']['statuses_changed'])} statuses changed"),
         "4. Every review attempt leaves a trace": f"{t['c4']['lines_matching']}/{t['c4']['requests_sent']}",
+        "4 (tightened). 25 traces, each at most 8 KB": (
+            f"{t['c4']['lines_within_8kb']}/{t['c4']['tightened_requests_sent']} within 8 KB, "
+            f"{t['c4']['tightened_lines_matching']}/{t['c4']['tightened_requests_sent']} matching, "
+            f"largest {t['c4']['largest_line_bytes']:,} B"),
         "5. Original system decides the same way": f"{sum(s['pass'] for s in t['samples'])}/{len(t['samples'])}",
     }
     for k, v in score.items():
@@ -179,9 +220,10 @@ def main():
 
     config.RESULTS_DIR.mkdir(exist_ok=True)
     stamp = dt.datetime.now().strftime("%Y-%m-%d_%H%M%S")
-    path = config.RESULTS_DIR / f"extension_run_{stamp}_trial{args.trial}.md"
+    label = f"_{args.label}" if args.label else ""
+    path = config.RESULTS_DIR / f"extension_run_{stamp}_trial{args.trial}{label}.md"
     lines = [
-        f"# Extension run — trial {args.trial}",
+        f"# Extension run — trial {args.trial}{f' — {args.label}' if args.label else ''}",
         "",
         "- Produced by: `run_extension_eval.py::run_trial`",
         "- Service: `app.py::review`, `app.py::submit`, `app.py::get_log`, run log from `app.py::log_run`",

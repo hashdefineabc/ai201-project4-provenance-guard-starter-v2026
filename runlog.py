@@ -24,6 +24,43 @@ _lock = threading.Lock()
 # length is recorded separately, so nothing about the size is lost.
 PREVIEW_CHARS = 80
 
+# Milestone 6: every other value is bounded too, whatever its field is called.
+# Before this only `text` was cut, and a 1 MB `reasoning` sent to /review was
+# copied into its log line twice (input, and the echoed output) — 2 MB a line.
+# 300 keeps every label whole (the longest is ~215 characters).
+MAX_FIELD_CHARS = 300
+MAX_ITEMS = 50
+MAX_SECTION_CHARS = 3000
+
+
+def _bounded(value):
+    """A copy of `value` with every string, key and list cut down to size."""
+    if isinstance(value, str):
+        if len(value) <= MAX_FIELD_CHARS:
+            return value
+        return f"{value[:MAX_FIELD_CHARS]}…[+{len(value) - MAX_FIELD_CHARS} chars]"
+    if isinstance(value, dict):
+        items = list(value.items())
+        out = {_bounded(str(k)): _bounded(v) for k, v in items[:MAX_ITEMS]}
+        if len(items) > MAX_ITEMS:
+            out["…"] = f"+{len(items) - MAX_ITEMS} more keys"
+        return out
+    if isinstance(value, list):
+        out = [_bounded(v) for v in value[:MAX_ITEMS]]
+        if len(value) > MAX_ITEMS:
+            out.append(f"…[+{len(value) - MAX_ITEMS} items]")
+        return out
+    return value
+
+
+def _capped(section):
+    """The last guard: a section still too big after _bounded is cut whole."""
+    section = _bounded(section)
+    as_json = json.dumps(section, ensure_ascii=False, default=str)
+    if len(as_json) <= MAX_SECTION_CHARS:
+        return section
+    return {"truncated": as_json[:MAX_SECTION_CHARS], "json_chars": len(as_json)}
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
@@ -43,7 +80,7 @@ def summarise_input(payload) -> dict | None:
             summary["text_preview"] = value[:PREVIEW_CHARS]
         else:
             summary[key] = value
-    return summary
+    return _capped(summary)
 
 
 def summarise_output(body) -> dict | None:
@@ -52,7 +89,7 @@ def summarise_output(body) -> dict | None:
         return None
     if "entries" in body:
         return {"count": body.get("count")}
-    return body
+    return _capped(body)
 
 
 def log_run(**fields) -> dict:

@@ -1385,3 +1385,107 @@ All of this comes from `results/extension_run_2026-11-16_200459_trial3.md`, prod
 {"sample": "clearly_ai", "status": 200, "expected": {"guess": "ai", "model_score": 0.7544, "style_score": 0.8115}, "got": {"content_id": "c_c812952f09d1", "guess": "ai", "confidence": 0.783, "model_score": 0.7544, "style_score": 0.8115}, "pass": true}
 {"sample": "edited_ai", "status": 200, "expected": {"guess": "ai", "model_score": 0.5904, "style_score": 0.7157}, "got": {"content_id": "c_7e9810eadadd", "guess": "ai", "confidence": 0.6531, "model_score": 0.5904, "style_score": 0.7157}, "pass": true}
 ```
+
+
+---
+
+## Verdicts, Diagnosis and the Fix
+
+### The verdicts
+
+Against the targets in `criteria.md`, from the three runs in **Extension Run Log**:
+
+| Criterion | Target | Verdict |
+|---|---|---|
+| 1. Valid reviews are accepted | 10 of 10 | **MET** (10, 10, 10) |
+| 2. Bad review requests get a 400, never a 500 | 12 of 12 | **MET** (12, 12, 12) |
+| 3. `/review` records nothing | 0 new audit lines, 0 statuses changed | **MET** (0/0 each run) |
+| 4. Every review attempt leaves a trace | 22 of 22 | **MET** (22, 22, 22) |
+| 5. Original system decides the same way | 6 of 6 | **MET** (6, 6, 6) |
+
+**All five met, so the honest question is whether the targets were too low. For criteria 1–4 they were.** `/review` is a few fixed string checks with no model in it. Any target about whether it answers correctly was close to certain to pass, and I knew it when I wrote them. Criterion 5 was the one that could have missed, and it didn't move.
+
+**The criterion I tightened is 4.** It counted run-log lines and never looked inside them, yet the reason I gave for it was that the run log is the *only* evidence a review happened. Evidence has to stay readable. The tightened target (written under the original in `criteria.md`, which stays unchanged) adds three oversized requests and requires **every `/review` line to be at most 8 KB**. A normal line is about 657 bytes.
+
+### Before: the tightened target MISSED
+
+Three trials, `run_extension_eval.py --label before`. Output is in `results/extension_run_2026-11-16_2009{33,34,35}_trial{1,2,3}_before.md`.
+
+| Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
+|---|---|---|---|---|---|
+| 1. Valid reviews are accepted | 10 of 10 | 10/10 | 10/10 | 10/10 | MET |
+| 2. Bad review requests get a 400, never a 500 | 12 of 12 | 12/12 | 12/12 | 12/12 | MET |
+| 3. `/review` records nothing | +0 audit lines, 0 statuses changed | +0, 0 | +0, 0 | +0, 0 | MET |
+| 4. Every review attempt leaves a trace | 22 of 22 | 22/22 | 22/22 | 22/22 | MET |
+| 4 (tightened). 25 traces, each ≤ 8 KB | 25 of 25 within 8,192 B | 23/25 (max 2,000,492 B) | 23/25 (max 2,000,491 B) | 23/25 (max 2,000,491 B) | **MISSED** |
+| 5. Original system decides the same way | 6 of 6 | 6/6 | 6/6 | 6/6 | MET |
+
+The oversized requests in run 3 (case, status, size of its `runs.jsonl` line):
+`[('reasoning 1,000,000 chars', 200, 2000491), ('reviewer_id 100,000 chars', 200, 200477), ('JSON list of 100,000 items', 400, 322)]`
+
+The first 300 characters of the 1 MB-reasoning line in `logs/runs.jsonl`. The full line is 2,000,491 bytes, too big to paste:
+
+```
+{"timestamp": "2026-11-16T14:39:34.668+00:00", "run_id": "r_c1e026a45989", "method": "POST", "route": "/review", "status": 200, "duration_ms": 5.0, "cpu_ms": 4.9, "detector_was_loaded": true, "input": {"content_id": "c_x", "reviewer_id": "rev_eval", "outcome": "upheld", "reasoning": "aaaaaaaaaaaaaaa
+```
+
+### Diagnosis
+
+**The stage is the run log: `runlog.py::summarise_input` and `summarise_output`, called from `app.py::log_run`.** The route didn't fail, because every status was right (25/25 matching).
+
+**The mechanism: the size limit was tied to a field *name*, not to the size of the value.** `summarise_input` shortened exactly one key, `text`, and copied everything else as it came. `summarise_output` copied the whole response. That was safe for `/submit`, whose only large field is `text`, which isn't echoed back. `/review` is the first route where a large field has a different name, and the route echoes its input in the response. So:
+- a 1,000,000-character `reasoning` was written to the line **twice**: 2,000,491 bytes
+- a 100,000-character `reviewer_id` became 200,477 bytes, also twice
+
+The JSON list stayed at 322 bytes only because non-object bodies were already reduced to their type name.
+
+**The pattern: both misses are one problem with two symptoms.** The run log trusted field names to know which values might be large. Any field I didn't think of, on any future route, would bloat the log the same way. In three trials, `runs.jsonl` grew from 63 KB (as last committed) to 6.7 MB. Six lines, the two oversized requests per trial, account for 6.6 MB of it.
+
+### The one fix
+
+**In `runlog.py`, I bound every value instead of one named field.** A new `_bounded` cuts any string to 300 characters and any dict or list to 50 items, at any depth, including keys. It records what was cut (`…[+999700 chars]`), so the size is still visible. Then `_capped` cuts any section still over 3,000 characters as a whole. Both `summarise_input` and `summarise_output` go through it.
+
+The 300-character limit keeps every label whole (the longest is about 210 characters), so normal lines are byte-for-byte the same as before (657 B). Nothing in `app.py`, the route or the detector changed.
+
+### After: re-run, three trials
+
+`run_extension_eval.py --label after`, against a server restarted with only this change. Output is in `results/extension_run_2026-11-16_20104{0,1,2}_trial{1,2,3}_after.md`.
+
+| Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
+|---|---|---|---|---|---|
+| 1. Valid reviews are accepted | 10 of 10 | 10/10 | 10/10 | 10/10 | MET |
+| 2. Bad review requests get a 400, never a 500 | 12 of 12 | 12/12 | 12/12 | 12/12 | MET |
+| 3. `/review` records nothing | +0 audit lines, 0 statuses changed | +0, 0 | +0, 0 | +0, 0 | MET |
+| 4. Every review attempt leaves a trace | 22 of 22 | 22/22 | 22/22 | 22/22 | MET |
+| 4 (tightened). 25 traces, each ≤ 8 KB | 25 of 25 within 8,192 B | 25/25 (max 1,129 B) | 25/25 (max 1,127 B) | 25/25 (max 1,127 B) | MET |
+| 5. Original system decides the same way | 6 of 6 | 6/6 | 6/6 | 6/6 | MET |
+
+The same oversized requests in run 3: `[('reasoning 1,000,000 chars', 200, 1127), ('reviewer_id 100,000 chars', 200, 1111), ('JSON list of 100,000 items', 400, 322)]`
+
+The same 1 MB-reasoning request's line, now whole:
+
+```json
+{"timestamp": "2026-11-16T14:40:41.995+00:00", "run_id": "r_7cb423d26b63", "method": "POST", "route": "/review", "status": 200, "duration_ms": 4.9, "cpu_ms": 4.9, "detector_was_loaded": true, "input": {"content_id": "c_x", "reviewer_id": "rev_eval", "outcome": "upheld", "reasoning": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa…[+999700 chars]"}, "output": {"content_id": "c_x", "message": "Review received. It is not written to the audit log yet.", "outcome": "upheld", "reasoning": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa…[+999700 chars]", "recorded": false, "reviewer_id": "rev_eval"}, "error": null}
+```
+
+### Before and after, side by side
+
+| Criterion | Before (runs 1 / 2 / 3) | After (runs 1 / 2 / 3) |
+|---|---|---|
+| 1. Valid reviews | 10/10 / 10/10 / 10/10 — MET | 10/10 / 10/10 / 10/10 — MET |
+| 2. Bad requests → 400 | 12/12 / 12/12 / 12/12 — MET | 12/12 / 12/12 / 12/12 — MET |
+| 3. Records nothing (audit lines, statuses) | +0, 0 / +0, 0 / +0, 0 — MET | +0, 0 / +0, 0 / +0, 0 — MET |
+| 4. Trace for each attempt | 22/22 / 22/22 / 22/22 — MET | 22/22 / 22/22 / 22/22 — MET |
+| **4 tightened. Every line ≤ 8 KB** | **23/25, largest 2,000,492 B — MISSED** | **25/25, largest 1,129 B — MET** |
+| 5. Original decisions unchanged | 6/6 / 6/6 / 6/6 — MET | 6/6 / 6/6 / 6/6 — MET |
+
+### Did it help?
+
+**Yes, for what it targeted.** The largest `/review` line went from 2,000,491 bytes to 1,127, about 1,800× smaller. Three after-trials added 56 KB to `runs.jsonl`, against about 6.6 MB for three before-trials. Nothing else moved: criteria 1–5 are identical before and after.
+
+**The trade:** the run log now keeps only the first 300 characters of any field. A reviewer who writes an honest 1,000-character explanation keeps its length in the log but loses the end of its text. By criterion 3, the run log is still the only place a review's reasoning exists. So until reviews go into the audit log, a long reasoning can't be recovered in full from anywhere. I accepted that because a log anyone can bloat by 2 MB per request stops being usable as evidence at all. But it's a real loss, not a free fix.
+
+**Still broken:**
+- **`/review` still *accepts* a 1 MB reasoning,** with a 200, and echoes all of it back in the response. The fix bounded the log, not the route. A length limit on `/review`'s fields, returning a 400, would be the next change, and criterion 2's bad-request list should gain an oversized case to cover it.
+- **The audit log is still unbounded.** `audit.py` writes `creator_id` and `reasoning` from `/submit` and `/appeal` at full length, through a different path this fix doesn't touch.
+- **`logs/runs.jsonl` is now 6.7 MB.** Almost all of that is the before-run evidence above. I kept it rather than trimming it, because it's the record of the miss.
